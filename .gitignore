@@ -1,0 +1,28 @@
+# Env / secrets
+.env
+*.local
+secrets/
+
+# Go
+/control-plane/bin/
+/node-agent/bin/
+*.test
+*.out
+
+# Node / Next
+node_modules/
+.next/
+dist/
+.turbo/
+npm-debug.log*
+
+# Caddy / data
+edge/build/caddy
+**/caddy_data/
+**/caddy_config/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,48 @@
+#!/usr/sbin/nft -f
+# Aegis edge — L3/L4 baseline DDoS protection for a Debian 13 edge node.
+# Install to /etc/nftables.conf and `systemctl enable --now nftables`.
+
+flush ruleset
+
+table inet aegis {
+	# Dynamic deny set the control plane can populate (IPs/CIDRs).
+	set blackhole {
+		type ipv4_addr
+		flags interval
+	}
+
+	chain inbound {
+		type filter hook input priority filter; policy drop;
+
+		# Conntrack fast paths.
+		ct state established,related accept
+		ct state invalid drop
+
+		iif "lo" accept
+
+		# ICMP / ping, rate-limited.
+		ip protocol icmp icmp type echo-request limit rate 5/second accept
+		ip6 nexthdr ipv6-icmp icmpv6 type { echo-request, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } limit rate 10/second accept
+
+		# Drop anything from the control-plane-managed blackhole set.
+		ip saddr @blackhole drop
+
+		# SSH (tighten the source in production).
+		tcp dport 22 ct state new limit rate 10/minute accept
+
+		# HTTP/HTTPS with SYN flood protection: cap NEW connections per source.
+		tcp dport { 80, 443 } ct state new meter http_meter { ip saddr limit rate 100/second burst 200 packets } accept
+		tcp dport { 80, 443 } ct state new meter http6_meter { ip6 saddr limit rate 100/second burst 200 packets } accept
+
+		# Everything else: drop.
+		counter drop
+	}
+
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+	}
+
+	chain outbound {
+		type filter hook output priority filter; policy accept;
+	}
+}

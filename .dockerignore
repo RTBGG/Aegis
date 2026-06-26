@@ -1,0 +1,7 @@
+**/node_modules
+**/.next
+.git
+**/*.md
+dashboard/node_modules
+**/bin
+**/build.err

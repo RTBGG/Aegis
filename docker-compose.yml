@@ -1,0 +1,121 @@
+name: aegis
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PDNS_DB_NAME: ${PDNS_DB_NAME}
+      PDNS_DB_USER: ${PDNS_DB_USER}
+      PDNS_DB_PASSWORD: ${PDNS_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./deploy/postgres/pdns-gpgsql-schema.sql:/pdns-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  powerdns:
+    image: powerdns/pdns-auth-49:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./deploy/powerdns/pdns.conf:/etc/powerdns/pdns.conf:ro
+    command:
+      - "--gpgsql-dbname=${PDNS_DB_NAME}"
+      - "--gpgsql-user=${PDNS_DB_USER}"
+      - "--gpgsql-password=${PDNS_DB_PASSWORD}"
+      - "--api-key=${PDNS_API_KEY}"
+      - "--default-soa-content=${ASSIGNED_NS1} hostmaster.${ASSIGNED_NS1} 0 10800 3600 604800 3600"
+    ports:
+      - "5300:53/udp"
+      - "5300:53/tcp"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./control-plane
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      powerdns:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  caddy-edge:
+    build:
+      context: .
+      dockerfile: deploy/caddy/Dockerfile
+    environment:
+      CONTROL_PLANE_URL: http://api:8080
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      EDGE_NAME: local-edge
+      EDGE_PUBLIC_IP: ${EDGE_PUBLIC_IP}
+      AEGIS_REDIS: redis:6379
+      CHALLENGE_SECRET: ${CHALLENGE_SECRET}
+      ACME_EMAIL: ${ACME_EMAIL}
+      CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-cp.localtest.me}
+      CP_API_UPSTREAM: api:8080
+      CP_DASH_UPSTREAM: dashboard:3000
+    depends_on:
+      - api
+      - dashboard
+      - redis
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile.base:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    restart: unless-stopped
+
+  # Demo origin so a proxied record (content: demo-origin) has a backend to hit.
+  demo-origin:
+    image: traefik/whoami:latest
+    restart: unless-stopped
+
+  # Dev mail catcher (set MAILER=smtp in .env to use). UI on http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddydata:
+  caddyconfig:

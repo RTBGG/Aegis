@@ -1,0 +1,19 @@
+[Unit]
+Description=Aegis edge node-agent (native; Phase 3 multi-node)
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+# Credentials are written by the enrollment script (edge.sh).
+EnvironmentFile=/etc/aegis/agent.env
+ExecStart=/usr/bin/aegis-agent
+Restart=always
+RestartSec=3
+# Least privilege: the agent only needs to manage Caddy + read config.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,46 @@
+# Aegis edge — base Caddyfile (static). The node-agent writes per-customer site
+# blocks into /etc/caddy/sites/*.caddy and runs `caddy reload`.
+{
+	admin 127.0.0.1:2019
+	email {$ACME_EMAIL}
+
+	# Handler order for third-party + custom directives (request flow):
+	# fingerprint → rate limit → WAF (hard-block attacks) → bot score →
+	# challenge (suspicious-but-clean only) → cache → proxy.
+	order ja4 first
+	order rate_limit after ja4
+	order coraza_waf after rate_limit
+	order botscore after coraza_waf
+	order challenge after botscore
+	order cache after challenge
+
+	# Souin/cache-handler global init (in-memory by default; Redis is a tuning step).
+	cache {
+		ttl 60s
+	}
+}
+
+# Control-plane site (dashboard + API). All-in-one deployments only; on real
+# edge nodes CONTROL_PLANE_HOST is unset and this block is skipped by Caddy.
+{$CONTROL_PLANE_HOST:localhost} {
+	tls internal
+
+	handle /api/* {
+		reverse_proxy {$CP_API_UPSTREAM:api:8080}
+	}
+	handle /edge/* {
+		reverse_proxy {$CP_API_UPSTREAM:api:8080}
+	}
+	handle /install/* {
+		reverse_proxy {$CP_API_UPSTREAM:api:8080}
+	}
+	handle /healthz {
+		reverse_proxy {$CP_API_UPSTREAM:api:8080}
+	}
+	handle {
+		reverse_proxy {$CP_DASH_UPSTREAM:dashboard:3000}
+	}
+}
+
+# Dynamic per-customer sites rendered by the control plane.
+import /etc/caddy/sites/*.caddy
