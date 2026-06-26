@@ -1,13 +1,20 @@
 # Aegis
 
-A self-hosted, Cloudflare-style edge platform: per-domain DNS, a toggleable
-reverse proxy with automatic TLS, caching, a WAF (Coraza + OWASP CRS),
-customizable rate-limiting, TLS/HTTP fingerprinting, anti-bot challenges, a
-multi-tenant dashboard with auth + admin, and one-command edge enrollment.
+> Self-hosted, Cloudflare-style edge platform: per-domain DNS, a reverse proxy with automatic TLS, WAF (Coraza + OWASP CRS), rate-limiting, and bot/DDoS protection — managed from a multi-tenant dashboard.
 
-> Status: **Phase 1 — Foundation + Security stack** (this repo). Multi-node edge
-> enrollment, ClickHouse analytics, and mTLS PKI are designed and land in
-> Phases 2–3. See `docs/architecture.md`.
+**Aegis** lets you point a domain's nameservers at your own infrastructure and flip a
+per-record "proxy" switch to route traffic through an edge that adds automatic SSL/TLS
+and HTTP→HTTPS, a Web Application Firewall (OWASP Core Rule Set via Coraza), customizable
+rate-limiting, JA4(H) fingerprinting, proof-of-work bot challenges, caching, and
+health-checked origin load-balancing. A Go control plane (PostgreSQL source of truth)
+drives PowerDNS for authoritative DNS and renders config to a Caddy data plane via a
+lightweight node-agent. Deploys all-in-one on Debian 13 with Docker Compose.
+
+> ⚠️ **Phase 1 — Foundation + Security stack** (this repo). Multi-node edge enrollment,
+> per-node mTLS, and ClickHouse analytics are designed and land in Phases 2–3. See
+> `docs/architecture.md`.
+
+**Topics:** `waf` · `reverse-proxy` · `dns` · `cloudflare-alternative` · `coraza` · `owasp-crs` · `caddy` · `powerdns` · `ddos-protection` · `bot-detection` · `self-hosted` · `golang` · `nextjs`
 
 ## Architecture (3 planes)
 
