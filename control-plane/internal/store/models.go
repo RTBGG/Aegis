@@ -86,14 +86,16 @@ type WAFRouteOverride struct {
 }
 
 type Edge struct {
-	ID           uuid.UUID  `db:"id" json:"id"`
-	Name         string     `db:"name" json:"name"`
-	PublicIP     string     `db:"public_ip" json:"public_ip"`
-	Region       string     `db:"region" json:"region"`
-	Status       string     `db:"status" json:"status"`
-	AgentVersion *string    `db:"agent_version" json:"agent_version"`
-	LastSeenAt   *time.Time `db:"last_seen_at" json:"last_seen_at"`
-	CreatedAt    time.Time  `db:"created_at" json:"created_at"`
+	ID             uuid.UUID  `db:"id" json:"id"`
+	Name           string     `db:"name" json:"name"`
+	PublicIP       string     `db:"public_ip" json:"public_ip"`
+	Region         string     `db:"region" json:"region"`
+	Status         string     `db:"status" json:"status"`
+	AgentVersion   *string    `db:"agent_version" json:"agent_version"`
+	AgentTokenHash *string    `db:"agent_token_hash" json:"-"`
+	EnrolledAt     *time.Time `db:"enrolled_at" json:"enrolled_at"`
+	LastSeenAt     *time.Time `db:"last_seen_at" json:"last_seen_at"`
+	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
 }
 
 type EnrollmentToken struct {

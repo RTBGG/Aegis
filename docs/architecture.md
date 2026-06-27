@@ -193,5 +193,32 @@ global blocklist, separate from the operator-managed `blocklists` table.
   audited admin impersonation, real SMTP email, per-route WAF tuning + custom
   SecRules import, richer bot scoring + managed/CAPTCHA challenges, and
   ClickHouse per-request analytics.
-- P3: multi-node edge enrollment over the served `install/edge.sh`, per-node
-  mTLS PKI, GeoDNS/weighted edge distribution, HA control plane, anycast option.
+- P3: multi-node edge enrollment is **built** (see below); remaining: per-node
+  mTLS PKI + cert rotation, GeoDNS/weighted edge distribution, HA control plane,
+  anycast option.
+
+## Multi-node edge enrollment (Phase 3)
+
+A new Debian 13 host joins the fleet with one copy-paste command:
+
+```
+curl -fsSL https://cp.example.com/install/edge.sh | sudo ENROLL_TOKEN=xxxx bash
+```
+
+1. Admin → Edge servers mints a **single-use, TTL-scoped** enrollment token
+   (stored hashed); the UI shows the one-liner.
+2. `edge.sh` (served by the control plane) preflights the host, installs Docker,
+   and `POST`s the token to `/edge/v1/enroll` (unauthenticated except by the
+   token itself). The control plane atomically consumes the token, registers the
+   edge, and **issues a durable per-node agent token** (stored hashed) plus the
+   shared challenge secret.
+3. The script writes the edge config and `docker compose up`s the edge image +
+   a local Redis. The node-agent authenticates to `/edge/v1/*` with the per-node
+   token; the edge API accepts either that or the all-in-one shared token, and
+   attributes telemetry to the authenticated edge.
+4. On enrollment the control plane re-syncs every proxied zone
+   (`domains.ReconcileEdges`) so the new edge's IP immediately enters the
+   PowerDNS rotation and the origin LB pools.
+
+Per-node **mTLS** (replacing the bearer token) and signed binary distribution
+are the remaining hardening steps.

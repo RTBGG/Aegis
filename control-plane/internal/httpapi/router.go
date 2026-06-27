@@ -54,6 +54,10 @@ func NewRouter(d Deps) http.Handler {
 		_, _ = w.Write([]byte(strings.ReplaceAll(edgeScript, "__CONTROL_PLANE_URL__", strings.TrimRight(d.Cfg.ControlPlaneURL, "/"))))
 	})
 
+	// Edge enrollment: unauthenticated except by the single-use enrollment token
+	// carried in the body. Exchanges it for a durable per-node agent token.
+	r.Post("/edge/v1/enroll", d.Edge.Enroll)
+
 	// Edge-facing API (agent bearer token, no CSRF).
 	r.Route("/edge/v1", func(r chi.Router) {
 		r.Use(d.Edge.Authn)

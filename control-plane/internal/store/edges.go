@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,6 +81,63 @@ func (s *Store) EdgeHeartbeat(ctx context.Context, id uuid.UUID, agentVersion, s
 		`UPDATE edges SET last_seen_at=now(), agent_version=$2, status=$3 WHERE id=$1`,
 		id, agentVersion, status)
 	return err
+}
+
+// GetEdgeByTokenHash resolves an edge from its per-node agent token hash.
+func (s *Store) GetEdgeByTokenHash(ctx context.Context, tokenHash string) (*Edge, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT * FROM edges WHERE agent_token_hash=$1`, tokenHash)
+	if err != nil {
+		return nil, err
+	}
+	e, err := pgx.CollectOneRow(rows, pgx.RowToStructByNameLax[Edge])
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// EnrollEdge atomically consumes a single-use enrollment token and registers (or
+// re-registers) an edge by name with a fresh per-node agent token. ErrNotFound
+// is returned when the enrollment token is missing, expired or already used.
+func (s *Store) EnrollEdge(ctx context.Context, enrollTokenHash, name, publicIP, region, agentTokenHash string) (*Edge, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var tokenID uuid.UUID
+	err = tx.QueryRow(ctx,
+		`UPDATE enrollment_tokens SET used_at=now()
+		 WHERE token_hash=$1 AND used_at IS NULL AND expires_at>now()
+		 RETURNING id`, enrollTokenHash).Scan(&tokenID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.Query(ctx,
+		`INSERT INTO edges (name, public_ip, region, status, agent_token_hash, enrolled_at)
+		 VALUES ($1,$2,$3,'pending',$4, now())
+		 ON CONFLICT (name) DO UPDATE SET
+		     public_ip=EXCLUDED.public_ip, region=EXCLUDED.region,
+		     status='pending', agent_token_hash=EXCLUDED.agent_token_hash, enrolled_at=now()
+		 RETURNING *`, name, publicIP, region, agentTokenHash)
+	if err != nil {
+		return nil, err
+	}
+	edge, err := pgx.CollectOneRow(rows, pgx.RowToStructByNameLax[Edge])
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE enrollment_tokens SET edge_id=$1 WHERE id=$2`, edge.ID, tokenID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &edge, nil
 }
 
 // --- enrollment tokens (Phase 3 multi-node; CRUD available now) ---

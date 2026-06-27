@@ -127,6 +127,7 @@ function Edges() {
             <th>Region</th>
             <th>Status</th>
             <th>Agent</th>
+            <th>Enrolled</th>
             <th>Last seen</th>
           </tr>
         </thead>
@@ -140,6 +141,7 @@ function Edges() {
                 <Badge tone={e.status === "healthy" ? "green" : e.status === "pending" ? "amber" : "red"}>{e.status}</Badge>
               </td>
               <td className="text-slate-400">{e.agent_version ?? "—"}</td>
+              <td className="text-slate-400">{e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : "local"}</td>
               <td className="text-slate-400">{e.last_seen_at ? new Date(e.last_seen_at).toLocaleTimeString() : "—"}</td>
             </tr>
           ))}

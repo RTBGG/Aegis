@@ -4,10 +4,17 @@
 package edgeapi
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/netip"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,21 +22,47 @@ import (
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/clickhouse"
 	"github.com/aegis/control-plane/internal/config"
+	"github.com/aegis/control-plane/internal/domains"
 	"github.com/aegis/control-plane/internal/geoip"
 	"github.com/aegis/control-plane/internal/store"
 	"github.com/aegis/control-plane/internal/web"
 )
 
 type API struct {
-	Store *store.Store
-	Cfg   *appcfg.Config
-	CH    *clickhouse.Client
-	Geo   *geoip.DB
+	Store   *store.Store
+	Cfg     *appcfg.Config
+	CH      *clickhouse.Client
+	Geo     *geoip.DB
+	Domains *domains.Service
 }
 
-func New(st *store.Store, cfg *appcfg.Config, ch *clickhouse.Client, geo *geoip.DB) *API {
-	return &API{Store: st, Cfg: cfg, CH: ch, Geo: geo}
+func New(st *store.Store, cfg *appcfg.Config, ch *clickhouse.Client, geo *geoip.DB, dom *domains.Service) *API {
+	return &API{Store: st, Cfg: cfg, CH: ch, Geo: geo, Domains: dom}
 }
+
+type ctxKey int
+
+const edgeCtxKey ctxKey = iota
+
+// edgeFromCtx returns the per-node edge identity when the request authenticated
+// with an enrolled edge's token (nil for the shared all-in-one token).
+func edgeFromCtx(ctx context.Context) *store.Edge {
+	e, _ := ctx.Value(edgeCtxKey).(*store.Edge)
+	return e
+}
+
+func randToken(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func hashToken(tok string) string {
+	sum := sha256.Sum256([]byte(tok))
+	return hex.EncodeToString(sum[:])
+}
+
+var nonEdgeName = regexp.MustCompile(`[^a-z0-9-]+`)
 
 const maxEventsBatch = 20000
 
@@ -88,17 +121,105 @@ func (a *API) Events(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "stored": len(lines)})
 }
 
-// Authn is middleware enforcing the shared agent bearer token.
+// Authn authenticates an edge: it accepts either the shared all-in-one agent
+// token (local edge) or a per-node token issued at enrollment. For per-node
+// tokens the edge identity is attached to the request context.
 func (a *API) Authn(next http.Handler) http.Handler {
 	want := "Bearer " + a.Cfg.AgentToken
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got := r.Header.Get("Authorization")
-		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-			web.Error(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
+		if a.Cfg.AgentToken != "" && subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1 {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		if tok, ok := strings.CutPrefix(got, "Bearer "); ok && tok != "" {
+			if edge, err := a.Store.GetEdgeByTokenHash(r.Context(), hashToken(tok)); err == nil {
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), edgeCtxKey, edge)))
+				return
+			}
+		}
+		web.Error(w, http.StatusUnauthorized, "unauthorized", "invalid agent token")
 	})
+}
+
+// Enroll exchanges a single-use enrollment token for a durable per-node agent
+// token and registers the edge. It is unauthenticated except by the enrollment
+// token itself. On success the new edge joins the DNS rotation immediately.
+func (a *API) Enroll(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token    string `json:"token"`
+		Name     string `json:"name"`
+		PublicIP string `json:"public_ip"`
+		Region   string `json:"region"`
+	}
+	if err := web.Decode(w, r, &in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	in.Token = strings.TrimSpace(in.Token)
+	if in.Token == "" {
+		web.Error(w, http.StatusBadRequest, "validation", "token is required")
+		return
+	}
+	if _, err := netip.ParseAddr(strings.TrimSpace(in.PublicIP)); err != nil {
+		web.Error(w, http.StatusBadRequest, "validation", "a valid public_ip is required")
+		return
+	}
+	name := edgeName(in.Name)
+	region := strings.TrimSpace(in.Region)
+	if region == "" {
+		region = "default"
+	}
+
+	agentToken := randToken(32)
+	edge, err := a.Store.EnrollEdge(r.Context(), hashToken(in.Token), name, strings.TrimSpace(in.PublicIP), region, hashToken(agentToken))
+	if errors.Is(err, store.ErrNotFound) {
+		web.Error(w, http.StatusUnauthorized, "invalid_token", "invalid, expired or already-used enrollment token")
+		return
+	}
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not enroll edge")
+		return
+	}
+
+	// Bring the new edge into the DNS rotation + LB pools (re-sync proxied zones).
+	if a.Domains != nil {
+		rc, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_ = a.Domains.ReconcileEdges(rc)
+		cancel()
+	}
+	_ = a.Store.Audit(r.Context(), nil, nil, "edge.enroll", edge.Name, clientIP(r), map[string]any{"edge_id": edge.ID.String(), "public_ip": edge.PublicIP})
+
+	web.JSON(w, http.StatusOK, map[string]any{
+		"edge_id":           edge.ID,
+		"name":              edge.Name,
+		"region":            edge.Region,
+		"public_ip":         edge.PublicIP,
+		"agent_token":       agentToken,
+		"control_plane_url": a.Cfg.ControlPlaneURL,
+		"challenge_secret":  a.Cfg.ChallengeSecret,
+	})
+}
+
+func edgeName(n string) string {
+	n = strings.ToLower(strings.TrimSpace(n))
+	n = nonEdgeName.ReplaceAllString(n, "-")
+	n = strings.Trim(n, "-")
+	if n == "" {
+		return "edge-" + randToken(4)
+	}
+	if len(n) > 60 {
+		n = n[:60]
+	}
+	return n
+}
+
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return strings.TrimSpace(strings.Split(xff, ",")[0])
+	}
+	host, _, _ := strings.Cut(r.RemoteAddr, ":")
+	return host
 }
 
 func (a *API) latest(r *http.Request) (*store.ConfigBundle, error) {
@@ -181,17 +302,23 @@ func (a *API) Telemetry(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	if in.EdgeName == "" {
-		web.Error(w, http.StatusBadRequest, "validation", "edge_name required")
-		return
-	}
-	edge, err := a.Store.GetEdgeByName(r.Context(), in.EdgeName)
-	if errors.Is(err, store.ErrNotFound) {
-		edge, err = a.Store.UpsertEdge(r.Context(), in.EdgeName, in.PublicIP, "default")
-	}
-	if err != nil {
-		web.Error(w, http.StatusInternalServerError, "internal", "could not resolve edge")
-		return
+	// An enrolled edge is identified by its per-node token (trusted); the shared
+	// all-in-one token falls back to the self-reported edge_name.
+	edge := edgeFromCtx(r.Context())
+	if edge == nil {
+		if in.EdgeName == "" {
+			web.Error(w, http.StatusBadRequest, "validation", "edge_name required")
+			return
+		}
+		var err error
+		edge, err = a.Store.GetEdgeByName(r.Context(), in.EdgeName)
+		if errors.Is(err, store.ErrNotFound) {
+			edge, err = a.Store.UpsertEdge(r.Context(), in.EdgeName, in.PublicIP, "default")
+		}
+		if err != nil {
+			web.Error(w, http.StatusInternalServerError, "internal", "could not resolve edge")
+			return
+		}
 	}
 	status := in.Status
 	if status == "" {
