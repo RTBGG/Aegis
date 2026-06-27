@@ -105,6 +105,21 @@ shared edge Coraza engine — a sensitive surface:
 - **Authorization**: all WAF tuning is scoped to the owning account; overrides
   delete by `(id, domain_id)`.
 
+## Bot scoring + CAPTCHA (Phase 2)
+
+- **Verified-bot allowlist is advisory**: crawlers are matched by User-Agent,
+  which is spoofable. It is an availability convenience (don't challenge
+  Googlebot), not a security control — scoring/WAF/blocklists still apply to
+  everything else, and operators can disable the allowlist per domain.
+- **CAPTCHA secret handling**: the provider secret is write-only over the API
+  (never returned; a blank value on update keeps the stored one) and is rendered
+  into the edge config bundle, which is delivered over the authenticated edge API
+  — the same trust boundary as the rest of the config. Token verification happens
+  server-side at the edge, so a forged client response cannot grant clearance.
+- **Clearance cookie**: HMAC-signed over client IP + UA + expiry with the
+  per-edge `CHALLENGE_SECRET`; it is `HttpOnly`, `Secure` (on TLS), time-boxed,
+  and not transferable to a different IP/UA.
+
 ## Known Phase 1 limitations (hardening backlog)
 
 - Agent auth is a shared bearer token, not per-node mTLS (P3).

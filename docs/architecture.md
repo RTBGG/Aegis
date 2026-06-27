@@ -85,6 +85,27 @@ coraza.conf → crs-setup.conf → default paranoia (SecAction 900110)
   remote-rule, or engine-global directives, or (accidentally) a syntax error that
   would stall config rendering for everyone.
 
+## Bot scoring + challenges (Phase 2)
+
+`botscore` (`edge/modules/botscore`) sums heuristic signals into a risk score:
+empty/suspect UA, missing `Accept`/`Accept-Language`/`Accept-Encoding`/cookies,
+a Chromium UA with no `Sec-Fetch-*`/`Sec-Ch-Ua` (headless tell), scanner paths
+(`/wp-login`, `/.env`, …), and per-IP request rate. Sensitivity (low/medium/
+high) picks the challenge/block thresholds. Verified crawlers (Googlebot, Bingbot,
+…) can be allowed past scoring (`allow_verified_bots`; UA-based, advisory).
+
+`challenge` (`edge/modules/challenge`) gates flagged clients and, on success,
+mints an HMAC clearance cookie. Two modes:
+- **pow** (default, "managed"): a transparent in-browser SHA-256 proof-of-work
+  interstitial — no user interaction.
+- **captcha**: a pluggable widget — Cloudflare Turnstile, hCaptcha, or reCAPTCHA
+  (one code path; they share the `siteverify` contract). The posted token is
+  verified server-side at the edge before clearance is granted.
+
+Both are configured per-domain from the security policy and rendered into the
+site's Caddyfile (`config.writeSite`). The CAPTCHA secret travels in the edge
+config bundle.
+
 ## Request pipeline (edge)
 
 `nftables (L3/4)` → `ja4` (JA4H fingerprint → `{http.vars.ja4h}`) →
@@ -138,8 +159,9 @@ global blocklist, separate from the operator-managed `blocklists` table.
 
 ## Phases 2–3 (remaining)
 
-- P2: ClickHouse analytics, richer bot scoring + CAPTCHA, billing. (Threat-feed
-  ingestion → auto-blocklists, DNSSEC, audited admin impersonation, real SMTP
-  email, and per-route WAF tuning + custom SecRules import are **built**.)
+- P2: ClickHouse analytics, billing. (Threat-feed ingestion → auto-blocklists,
+  DNSSEC, audited admin impersonation, real SMTP email, per-route WAF tuning +
+  custom SecRules import, and richer bot scoring + managed/CAPTCHA challenges are
+  **built**.)
 - P3: multi-node edge enrollment over the served `install/edge.sh`, per-node
   mTLS PKI, GeoDNS/weighted edge distribution, HA control plane, anycast option.

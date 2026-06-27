@@ -355,7 +355,47 @@ function SecurityTab({ domainId }: { domainId: string }) {
               ))}
             </Select>
           </Field>
-          <Toggle checked={p.challenge_enabled} onChange={(v) => set({ challenge_enabled: v })} label="Proof-of-work challenge for suspicious traffic" />
+          <Toggle
+            checked={p.bot_allow_verified}
+            onChange={(v) => set({ bot_allow_verified: v })}
+            label="Allow verified search-engine bots (Googlebot, Bingbot, …)"
+          />
+          <Toggle checked={p.challenge_enabled} onChange={(v) => set({ challenge_enabled: v })} label="Challenge suspicious traffic" />
+          {p.challenge_enabled && (
+            <div className="space-y-3 rounded-lg border border-edge bg-ink/30 p-3">
+              <Field label="Challenge type">
+                <Select value={p.challenge_mode} onChange={(e) => set({ challenge_mode: e.target.value as SecurityPolicy["challenge_mode"] })}>
+                  <option value="pow">Managed (proof-of-work, no interaction)</option>
+                  <option value="captcha">CAPTCHA</option>
+                </Select>
+              </Field>
+              {p.challenge_mode === "captcha" && (
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  <Field label="Provider">
+                    <Select
+                      value={p.captcha_provider || "turnstile"}
+                      onChange={(e) => set({ captcha_provider: e.target.value as SecurityPolicy["captcha_provider"] })}
+                    >
+                      <option value="turnstile">Cloudflare Turnstile</option>
+                      <option value="hcaptcha">hCaptcha</option>
+                      <option value="recaptcha">reCAPTCHA</option>
+                    </Select>
+                  </Field>
+                  <Field label="Site key">
+                    <Input value={p.captcha_sitekey} onChange={(e) => set({ captcha_sitekey: e.target.value })} placeholder="0x4AAA…" />
+                  </Field>
+                  <Field label="Secret key">
+                    <Input
+                      type="password"
+                      value={p.captcha_secret}
+                      onChange={(e) => set({ captcha_secret: e.target.value })}
+                      placeholder={p.captcha_secret_set ? "•••••••• (saved — leave blank to keep)" : "secret key"}
+                    />
+                  </Field>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </Card>
 

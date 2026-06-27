@@ -162,9 +162,19 @@ func (r *Renderer) writeSite(b *strings.Builder, host string, p *store.SecurityP
 
 	// Behavioural bot scoring + challenge.
 	if p.BotProtection != "off" {
-		fmt.Fprintf(b, "\tbotscore {\n\t\tsensitivity %s\n\t}\n", p.BotProtection)
+		b.WriteString("\tbotscore {\n")
+		fmt.Fprintf(b, "\t\tsensitivity %s\n", p.BotProtection)
+		if p.BotAllowVerified {
+			b.WriteString("\t\tallow_verified_bots\n")
+		}
+		b.WriteString("\t}\n")
 		if p.ChallengeEnabled {
-			fmt.Fprintf(b, "\tchallenge {\n\t\tsecret {env.CHALLENGE_SECRET}\n\t}\n")
+			b.WriteString("\tchallenge {\n\t\tsecret {env.CHALLENGE_SECRET}\n")
+			if p.ChallengeMode == "captcha" && p.CaptchaProvider != "" && p.CaptchaSitekey != "" && p.CaptchaSecret != "" {
+				fmt.Fprintf(b, "\t\tmode captcha\n\t\tprovider %s\n\t\tsitekey %s\n\t\tcaptcha_secret %s\n",
+					p.CaptchaProvider, p.CaptchaSitekey, p.CaptchaSecret)
+			}
+			b.WriteString("\t}\n")
 		}
 	}
 

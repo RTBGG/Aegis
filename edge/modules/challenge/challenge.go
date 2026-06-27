@@ -5,6 +5,7 @@
 package challenge
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -36,10 +37,23 @@ func init() {
 	httpcaddyfile.RegisterHandlerDirective("challenge", parseCaddyfile)
 }
 
-// Handler serves and verifies the proof-of-work challenge.
+// Handler serves and verifies an anti-bot challenge. The default "pow" mode is a
+// transparent proof-of-work interstitial; "captcha" mode renders a pluggable
+// CAPTCHA widget (Turnstile/hCaptcha/reCAPTCHA) and verifies it server-side.
+// Either way, success mints a signed clearance cookie.
 type Handler struct {
 	Secret     string `json:"secret,omitempty"`
 	Difficulty int    `json:"difficulty,omitempty"`
+
+	// Mode is "pow" (default) or "captcha".
+	Mode          string `json:"mode,omitempty"`
+	Provider      string `json:"provider,omitempty"` // turnstile|hcaptcha|recaptcha
+	SiteKey       string `json:"sitekey,omitempty"`
+	CaptchaSecret string `json:"captcha_secret,omitempty"`
+	VerifyURL     string `json:"verify_url,omitempty"` // override provider default (testing)
+
+	prov   captchaProvider
+	client *http.Client
 }
 
 func (Handler) CaddyModule() caddy.ModuleInfo {
@@ -59,11 +73,24 @@ func (h *Handler) Provision(_ caddy.Context) error {
 	if h.Difficulty <= 0 {
 		h.Difficulty = defaultDiff
 	}
+	if h.Mode == "" {
+		h.Mode = "pow"
+	}
+	if h.Mode == "captcha" {
+		h.prov = providers[h.Provider]
+		if h.VerifyURL != "" {
+			h.prov.verifyURL = h.VerifyURL
+		}
+		h.client = &http.Client{Timeout: captchaVerifyTimeout}
+	}
 	return nil
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	if r.URL.Path == submitPath {
+		if h.Mode == "captcha" {
+			return h.verifyCaptchaSubmit(w, r)
+		}
 		return h.verify(w, r)
 	}
 	if h.hasClearance(r) {
@@ -74,6 +101,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		return nil
 	}
 	return next.ServeHTTP(w, r)
+}
+
+// verifyCaptchaSubmit validates a posted CAPTCHA response and, on success, mints
+// the clearance cookie and redirects back to the original target.
+func (h *Handler) verifyCaptchaSubmit(w http.ResponseWriter, r *http.Request) error {
+	if err := r.ParseForm(); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return nil
+	}
+	token := r.Form.Get(h.prov.fieldName)
+	to := sanitizeTarget(r.FormValue("to"))
+	if token == "" {
+		http.Redirect(w, r, to, http.StatusFound)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), captchaVerifyTimeout)
+	defer cancel()
+	ok, err := verifyCaptcha(ctx, h.client, h.prov.verifyURL, h.CaptchaSecret, token, clientIP(r))
+	if err != nil || !ok {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte("captcha verification failed"))
+		return nil
+	}
+	h.setClearance(w, r)
+	http.Redirect(w, r, to, http.StatusFound)
+	return nil
 }
 
 // --- clearance cookie ---
@@ -184,12 +238,23 @@ func clientIP(r *http.Request) string {
 }
 
 func (h *Handler) serveInterstitial(w http.ResponseWriter, _ *http.Request, to string) {
-	page := strings.NewReplacer(
-		"__C__", h.issueToken(),
-		"__DIFF__", strconv.Itoa(h.Difficulty),
-		"__TO__", htmlEscape(to),
-		"__SUBMIT__", submitPath,
-	).Replace(interstitialHTML)
+	var page string
+	if h.Mode == "captcha" {
+		page = strings.NewReplacer(
+			"__SCRIPT__", h.prov.scriptURL,
+			"__WIDGET__", h.prov.widgetClass,
+			"__SITEKEY__", htmlEscape(h.SiteKey),
+			"__TO__", htmlEscape(to),
+			"__SUBMIT__", submitPath,
+		).Replace(captchaHTML)
+	} else {
+		page = strings.NewReplacer(
+			"__C__", h.issueToken(),
+			"__DIFF__", strconv.Itoa(h.Difficulty),
+			"__TO__", htmlEscape(to),
+			"__SUBMIT__", submitPath,
+		).Replace(interstitialHTML)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusServiceUnavailable) // 503 while verifying
@@ -219,6 +284,31 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.Errf("invalid difficulty: %v", err)
 				}
 				h.Difficulty = n
+			case "mode":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.Mode = d.Val()
+			case "provider":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.Provider = d.Val()
+			case "sitekey":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.SiteKey = d.Val()
+			case "captcha_secret":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.CaptchaSecret = d.Val()
+			case "verify_url":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				h.VerifyURL = d.Val()
 			default:
 				return d.Errf("unknown challenge option %q", d.Val())
 			}
