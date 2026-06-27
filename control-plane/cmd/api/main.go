@@ -15,6 +15,7 @@ import (
 	"github.com/aegis/control-plane/internal/analytics"
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/auth"
+	"github.com/aegis/control-plane/internal/clickhouse"
 	"github.com/aegis/control-plane/internal/config"
 	"github.com/aegis/control-plane/internal/dns"
 	"github.com/aegis/control-plane/internal/domains"
@@ -56,6 +57,11 @@ func main() {
 	renderer := config.New(st, cfg)
 	feeds := threatfeed.New(st, renderer)
 
+	ch := clickhouse.New(cfg.ClickHouseURL, cfg.ClickHouseDB, cfg.ClickHouseUser, cfg.ClickHousePassword)
+	if ch.Enabled() {
+		ensureClickHouse(ctx, ch)
+	}
+
 	if err := bootstrap(ctx, st, cfg); err != nil {
 		slog.Error("bootstrap", "err", err)
 		os.Exit(1)
@@ -71,9 +77,9 @@ func main() {
 		Auth:      auth.New(st, cfg, ml),
 		Domains:   domains.New(st, pdns, cfg, renderer),
 		Security:  security.New(st, renderer),
-		Analytics: analytics.New(st),
+		Analytics: analytics.New(st, ch),
 		Admin:     admin.New(st, cfg, renderer, feeds, ml),
-		Edge:      edgeapi.New(st, cfg),
+		Edge:      edgeapi.New(st, cfg, ch),
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -115,6 +121,28 @@ func waitAndMigrate(dbURL string) error {
 		return nil
 	}
 	return lastErr
+}
+
+// ensureClickHouse creates the analytics schema, retrying briefly while
+// ClickHouse finishes starting. Failure is non-fatal — analytics degrade
+// gracefully and the schema is re-attempted on the next boot.
+func ensureClickHouse(ctx context.Context, ch *clickhouse.Client) {
+	for i := 0; i < 15; i++ {
+		c, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := ch.EnsureSchema(c)
+		cancel()
+		if err == nil {
+			slog.Info("clickhouse analytics enabled")
+			return
+		}
+		slog.Info("waiting for clickhouse…", "attempt", i+1, "err", err.Error())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+	slog.Warn("clickhouse schema not ready; analytics may be degraded")
 }
 
 // bootstrap seeds the superadmin and the local edge on first boot.

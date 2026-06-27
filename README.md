@@ -10,9 +10,11 @@ health-checked origin load-balancing. A Go control plane (PostgreSQL source of t
 drives PowerDNS for authoritative DNS and renders config to a Caddy data plane via a
 lightweight node-agent. Deploys all-in-one on Debian 13 with Docker Compose.
 
-> ⚠️ **Phase 1 — Foundation + Security stack** (this repo). Multi-node edge enrollment,
-> per-node mTLS, and ClickHouse analytics are designed and land in Phases 2–3. See
-> `docs/architecture.md`.
+> **Status:** Phase 1 (foundation + security stack) and most of Phase 2 are built —
+> threat-feed auto-blocklists, DNSSEC, audited impersonation, real SMTP, per-route
+> WAF tuning + custom SecRules, richer bot scoring + managed/CAPTCHA challenges, and
+> ClickHouse per-request analytics. Multi-node edge enrollment + per-node mTLS
+> (Phase 3) and billing (deferred) remain. See `docs/architecture.md`.
 
 **Topics:** `waf` · `reverse-proxy` · `dns` · `cloudflare-alternative` · `coraza` · `owasp-crs` · `caddy` · `powerdns` · `ddos-protection` · `bot-detection` · `self-hosted` · `golang` · `nextjs`
 

@@ -5,12 +5,15 @@ package edgeapi
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aegis/control-plane/internal/appcfg"
+	"github.com/aegis/control-plane/internal/clickhouse"
 	"github.com/aegis/control-plane/internal/config"
 	"github.com/aegis/control-plane/internal/store"
 	"github.com/aegis/control-plane/internal/web"
@@ -19,10 +22,43 @@ import (
 type API struct {
 	Store *store.Store
 	Cfg   *appcfg.Config
+	CH    *clickhouse.Client
 }
 
-func New(st *store.Store, cfg *appcfg.Config) *API {
-	return &API{Store: st, Cfg: cfg}
+func New(st *store.Store, cfg *appcfg.Config, ch *clickhouse.Client) *API {
+	return &API{Store: st, Cfg: cfg, CH: ch}
+}
+
+const maxEventsBatch = 20000
+
+// Events ingests a batch of per-request analytics events from the agent and
+// inserts them into ClickHouse. When ClickHouse is disabled the batch is
+// accepted and dropped so the edge's Redis queue still drains.
+func (a *API) Events(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20))
+	if err := dec.Decode(&in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if !a.CH.Enabled() || len(in.Events) == 0 {
+		web.JSON(w, http.StatusOK, map[string]any{"ok": true, "stored": 0})
+		return
+	}
+	if len(in.Events) > maxEventsBatch {
+		in.Events = in.Events[:maxEventsBatch]
+	}
+	lines := make([]string, len(in.Events))
+	for i, e := range in.Events {
+		lines[i] = string(e)
+	}
+	if err := a.CH.Insert(r.Context(), "aegis_requests", strings.Join(lines, "\n")); err != nil {
+		web.Error(w, http.StatusBadGateway, "analytics_error", "insert failed: "+err.Error())
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "stored": len(lines)})
 }
 
 // Authn is middleware enforcing the shared agent bearer token.

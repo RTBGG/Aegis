@@ -41,6 +41,14 @@ type Config struct {
 	// feeds (Spamhaus DROP, FireHOL). Set THREATFEED_SYNC=off in air-gapped
 	// deployments; manual refresh from the admin UI still works either way.
 	ThreatFeedSync bool
+
+	// ClickHouse powers high-volume per-request analytics. Optional: when
+	// CLICKHOUSE_URL is empty, the rich analytics endpoints report disabled and
+	// the dashboard falls back to the coarse Postgres counters.
+	ClickHouseURL      string
+	ClickHouseDB       string
+	ClickHouseUser     string
+	ClickHousePassword string
 }
 
 // SMTPConfig holds outbound mail settings used when MAILER=smtp.
@@ -83,6 +91,11 @@ func Load() (*Config, error) {
 		ACMEEmail:       env("ACME_EMAIL", "admin@example.com"),
 		ChallengeSecret: os.Getenv("CHALLENGE_SECRET"),
 		ThreatFeedSync:  envBool("THREATFEED_SYNC", true),
+
+		ClickHouseURL:      os.Getenv("CLICKHOUSE_URL"),
+		ClickHouseDB:       env("CLICKHOUSE_DB", "aegis"),
+		ClickHouseUser:     env("CLICKHOUSE_USER", "default"),
+		ClickHousePassword: os.Getenv("CLICKHOUSE_PASSWORD"),
 	}
 	c.SessionSecret = []byte(os.Getenv("SESSION_SECRET"))
 	c.CSRFSecret = []byte(os.Getenv("CSRF_SECRET"))

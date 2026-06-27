@@ -85,6 +85,29 @@ coraza.conf → crs-setup.conf → default paranoia (SecAction 900110)
   remote-rule, or engine-global directives, or (accidentally) a syntax error that
   would stall config rendering for everyone.
 
+## Per-request analytics (Phase 2, ClickHouse)
+
+A second telemetry path captures per-request events for Cloudflare-style
+analytics, alongside the coarse Postgres counters:
+
+```
+edge: ja4 module wraps the response → emits a JSON event (ts, host, ip, method,
+  path, status, bytes, ua, ja4h, action) to Redis list aegis:events
+node-agent: LPOP a batch each interval → POST /edge/v1/events
+control plane: edgeapi.Events → ClickHouse INSERT … FORMAT JSONEachRow
+dashboard: GET /domains/{id}/insights?window= → time-series, unique visitors,
+  top paths, status breakdown (inline SVG charts)
+```
+
+- **Store**: `internal/clickhouse` is a dependency-free HTTP-interface client.
+  The `aegis_requests` table is a MergeTree partitioned by day, ordered by
+  `(host, ts)`, with a 30-day TTL. Created on boot (`EnsureSchema`).
+- **Optional**: gated by `CLICKHOUSE_URL`. Disabled → the events endpoint
+  drains-and-drops (so Redis doesn't grow) and `/insights` returns
+  `enabled:false`; the dashboard shows a hint and the coarse counters remain.
+- **Queries** (`internal/analytics/insights.go`) filter by the domain's apex +
+  subdomains and use ClickHouse query parameters (no SQL injection).
+
 ## Bot scoring + challenges (Phase 2)
 
 `botscore` (`edge/modules/botscore`) sums heuristic signals into a risk score:
@@ -159,9 +182,10 @@ global blocklist, separate from the operator-managed `blocklists` table.
 
 ## Phases 2–3 (remaining)
 
-- P2: ClickHouse analytics, billing. (Threat-feed ingestion → auto-blocklists,
-  DNSSEC, audited admin impersonation, real SMTP email, per-route WAF tuning +
-  custom SecRules import, and richer bot scoring + managed/CAPTCHA challenges are
-  **built**.)
+- P2: billing/plans/quotas (deferred — the platform is free for now). Everything
+  else in P2 is **built**: threat-feed ingestion → auto-blocklists, DNSSEC,
+  audited admin impersonation, real SMTP email, per-route WAF tuning + custom
+  SecRules import, richer bot scoring + managed/CAPTCHA challenges, and
+  ClickHouse per-request analytics.
 - P3: multi-node edge enrollment over the served `install/edge.sh`, per-node
   mTLS PKI, GeoDNS/weighted edge distribution, HA control plane, anycast option.

@@ -9,15 +9,17 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aegis/control-plane/internal/auth"
+	"github.com/aegis/control-plane/internal/clickhouse"
 	"github.com/aegis/control-plane/internal/store"
 	"github.com/aegis/control-plane/internal/web"
 )
 
 type Service struct {
 	Store *store.Store
+	CH    *clickhouse.Client
 }
 
-func New(st *store.Store) *Service { return &Service{Store: st} }
+func New(st *store.Store, ch *clickhouse.Client) *Service { return &Service{Store: st, CH: ch} }
 
 func windowFrom(r *http.Request) time.Time {
 	switch r.URL.Query().Get("window") {
