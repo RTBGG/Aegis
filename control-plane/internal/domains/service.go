@@ -124,6 +124,21 @@ func (s *Service) syncZone(ctx context.Context, domain *store.Domain) error {
 	return nil
 }
 
+// ReconcileEdges re-publishes every active zone's proxied records against the
+// current healthy edge IP set and re-renders edge config. Called when the edge
+// fleet changes (e.g. a node enrolls) so new edges join the DNS rotation.
+func (s *Service) ReconcileEdges(ctx context.Context) error {
+	doms, err := s.Store.ListActiveDomainsForRender(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range doms {
+		_ = s.syncZone(ctx, &doms[i]) // best-effort per zone
+	}
+	_, _, _ = s.Render.Rebuild(ctx)
+	return nil
+}
+
 // fqdnOf returns the fully-qualified host for a record within its zone.
 func fqdnOf(zone string, r *store.DNSRecord) string {
 	return dns.FQDN(zone, r.Name)

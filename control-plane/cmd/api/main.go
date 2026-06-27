@@ -81,14 +81,15 @@ func main() {
 		slog.Info("initial config rendered", "changed", changed)
 	}
 
+	dom := domains.New(st, pdns, cfg, renderer)
 	deps := httpapi.Deps{
 		Cfg:       cfg,
 		Auth:      auth.New(st, cfg, ml),
-		Domains:   domains.New(st, pdns, cfg, renderer),
+		Domains:   dom,
 		Security:  security.New(st, renderer),
 		Analytics: analytics.New(st, ch),
 		Admin:     admin.New(st, cfg, renderer, feeds, ml),
-		Edge:      edgeapi.New(st, cfg, ch, geoDB),
+		Edge:      edgeapi.New(st, cfg, ch, geoDB, dom),
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

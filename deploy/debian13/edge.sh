@@ -6,6 +6,6 @@
 # Operators run the one-liner shown in the Admin → Edge servers UI:
 #   curl -fsSL https://cp.example.com/install/edge.sh | sudo ENROLL_TOKEN=xxxx bash
 #
-# This file is a pointer so the path exists in the repo. Multi-node enrollment
-# is finalized in Phase 3.
+# This file is a pointer so the path exists in the repo; the live installer
+# (control-plane/internal/httpapi/edge.sh) performs the real token exchange.
 echo "Fetch the live installer from <CONTROL_PLANE_URL>/install/edge.sh (see Admin → Edge servers)."

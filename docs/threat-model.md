@@ -28,11 +28,21 @@ controls. This document records trust boundaries and the security posture.
 
 The served `install/edge.sh` provisions a new host, so it is hardened:
 
-- Tokens are **single-use** and **short-TTL**, stored **hashed** (SHA-256).
+- Enrollment tokens are **single-use** and **short-TTL**, stored **hashed**
+  (SHA-256); the consume is atomic (one transaction), so a token cannot enroll
+  two nodes or be replayed.
 - The secret is passed via **env var** (`ENROLL_TOKEN`), never in a URL/log.
-- Bootstrap pulls signed artifacts; post-enrollment traffic uses **mTLS** (P3).
+- `/edge/v1/enroll` exchanges the token for a **durable per-node agent token**
+  (also stored hashed); every subsequent edge call authenticates with it, so a
+  node has its own revocable identity rather than a shared secret. The challenge
+  secret returned at enrollment is delivered only over the token-authenticated
+  HTTPS exchange.
+- Telemetry/metrics are attributed to the **authenticated** edge, so a node
+  cannot spoof another's identity via the self-reported name.
 - The edge `systemd` unit runs least-privilege (`NoNewPrivileges`,
   `ProtectSystem=full`, only `CAP_NET_BIND_SERVICE`).
+- **Remaining hardening**: per-node **mTLS** (replacing the bearer token), signed
+  binary/image distribution, and edge revocation UI.
 
 ## Threat-feed ingestion (Phase 2)
 
@@ -140,7 +150,9 @@ shared edge Coraza engine — a sensitive surface:
 
 ## Known Phase 1 limitations (hardening backlog)
 
-- Agent auth is a shared bearer token, not per-node mTLS (P3).
+- Enrolled edges authenticate with a durable per-node bearer token; the
+  all-in-one local edge still uses the shared token. Per-node mTLS is the next
+  hardening step (P3).
 - The Caddy admin API is bound to `127.0.0.1` and the agent is co-located in the
   edge container so it is never network-exposed.
 - WAF block counts aren't yet attributed per-domain in telemetry (global
