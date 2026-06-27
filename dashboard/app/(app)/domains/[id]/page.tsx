@@ -2,8 +2,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import type { Domain, DnsRecord, DnssecInfo, SecurityPolicy, MetricsSummary } from "@/lib/types";
-import { Button, Input, Select, Field, Card, Badge, Toggle, ErrorText } from "@/components/ui";
+import type { Domain, DnsRecord, DnssecInfo, SecurityPolicy, WafOverride, MetricsSummary } from "@/lib/types";
+import { Button, Input, Select, Field, Card, Badge, Toggle, Textarea, ErrorText } from "@/components/ui";
 
 type Tab = "dns" | "dnssec" | "security" | "analytics";
 const TAB_LABEL: Record<Tab, string> = { dns: "DNS", dnssec: "DNSSEC", security: "Security", analytics: "Analytics" };
@@ -285,6 +285,7 @@ function DnssecTab({ domainId }: { domainId: string }) {
 function SecurityTab({ domainId }: { domainId: string }) {
   const [p, setP] = useState<SecurityPolicy | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saveErr, setSaveErr] = useState("");
 
   useEffect(() => {
     api.get<{ security: SecurityPolicy }>(`/domains/${domainId}/security`).then((r) => setP(r.security)).catch(() => {});
@@ -294,9 +295,14 @@ function SecurityTab({ domainId }: { domainId: string }) {
   const set = (patch: Partial<SecurityPolicy>) => setP({ ...p, ...patch });
 
   async function save() {
-    await api.put(`/domains/${domainId}/security`, p);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSaveErr("");
+    try {
+      await api.put(`/domains/${domainId}/security`, p);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setSaveErr(e instanceof ApiError ? e.message : "Save failed");
+    }
   }
 
   return (
@@ -315,8 +321,24 @@ function SecurityTab({ domainId }: { domainId: string }) {
               </Select>
             </Field>
           </div>
+          <Field label="Custom SecLang rules (advanced)">
+            <Textarea
+              rows={5}
+              spellCheck={false}
+              placeholder={`SecRule ARGS:foo "@rx evil" "id:100001,phase:2,deny,status:403,msg:'custom'"`}
+              value={p.waf_custom_rules}
+              onChange={(e) => set({ waf_custom_rules: e.target.value })}
+            />
+          </Field>
+          <p className="text-xs text-slate-500">
+            Appended to the OWASP CRS engine. Only SecRule/SecAction/SecMarker and SecRule(Remove|Update)* directives are
+            allowed. Test with Mode = “Detect only” before blocking.
+          </p>
         </div>
       </Card>
+
+      <WAFOverrides domainId={domainId} />
+
 
       <Card title="Rate limiting & bot protection">
         <div className="space-y-3">
@@ -350,8 +372,104 @@ function SecurityTab({ domainId }: { domainId: string }) {
       <div className="flex items-center gap-3">
         <Button onClick={save}>Save changes</Button>
         {saved && <span className="text-sm text-emerald-300">Saved · pushing to edge…</span>}
+        <ErrorText>{saveErr}</ErrorText>
       </div>
     </div>
+  );
+}
+
+function WAFOverrides({ domainId }: { domainId: string }) {
+  const [rows, setRows] = useState<WafOverride[]>([]);
+  const [path, setPath] = useState("");
+  const [mode, setMode] = useState<WafOverride["mode"]>("off");
+  const [excluded, setExcluded] = useState("");
+  const [paranoia, setParanoia] = useState("");
+  const [err, setErr] = useState("");
+
+  function load() {
+    api.get<{ overrides: WafOverride[] }>(`/domains/${domainId}/waf/overrides`).then((r) => setRows(r.overrides ?? [])).catch(() => {});
+  }
+  useEffect(load, [domainId]);
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    setErr("");
+    try {
+      await api.post(`/domains/${domainId}/waf/overrides`, {
+        path,
+        mode,
+        excluded_rules: excluded,
+        paranoia: paranoia ? Number(paranoia) : null,
+      });
+      setPath("");
+      setExcluded("");
+      setParanoia("");
+      load();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Failed to add override");
+    }
+  }
+  async function del(id: string) {
+    await api.del(`/domains/${domainId}/waf/overrides/${id}`);
+    load();
+  }
+
+  return (
+    <Card title="Per-route WAF overrides">
+      <p className="mb-3 text-sm text-slate-400">
+        Relax or disable the WAF for requests under a path prefix — e.g. drop a noisy CRS rule on <span className="font-mono">/api/</span>.
+      </p>
+      <form onSubmit={add} className="grid grid-cols-1 gap-3 md:grid-cols-5 md:items-end">
+        <Field label="Path prefix">
+          <Input placeholder="/api/" value={path} onChange={(e) => setPath(e.target.value)} required />
+        </Field>
+        <Field label="Mode">
+          <Select value={mode} onChange={(e) => setMode(e.target.value as WafOverride["mode"])}>
+            <option value="off">Disable WAF</option>
+            <option value="detect">Detect only</option>
+            <option value="inherit">Inherit (just exclusions)</option>
+          </Select>
+        </Field>
+        <Field label="Exclude rule IDs">
+          <Input placeholder="942100 942110" value={excluded} onChange={(e) => setExcluded(e.target.value)} />
+        </Field>
+        <Field label="Paranoia">
+          <Input type="number" min={1} max={4} placeholder="—" value={paranoia} onChange={(e) => setParanoia(e.target.value)} />
+        </Field>
+        <Button type="submit">Add</Button>
+      </form>
+      <ErrorText>{err}</ErrorText>
+      {rows.length > 0 && (
+        <table className="mt-4 w-full text-sm">
+          <thead className="text-left text-xs uppercase text-slate-500">
+            <tr>
+              <th className="py-2">Path</th>
+              <th>Mode</th>
+              <th>Excluded rules</th>
+              <th>Paranoia</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-edge">
+            {rows.map((o) => (
+              <tr key={o.id}>
+                <td className="py-2 font-mono text-slate-300">{o.path}</td>
+                <td>
+                  <Badge tone={o.mode === "off" ? "red" : o.mode === "detect" ? "amber" : "slate"}>{o.mode}</Badge>
+                </td>
+                <td className="font-mono text-slate-400">{o.excluded_rules || "—"}</td>
+                <td className="text-slate-400">{o.paranoia ?? "—"}</td>
+                <td className="text-right">
+                  <button onClick={() => del(o.id)} className="text-red-400 hover:underline">
+                    delete
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
   );
 }
 

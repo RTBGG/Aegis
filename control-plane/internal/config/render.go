@@ -83,6 +83,12 @@ func (r *Renderer) Render(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		var overrides []store.WAFRouteOverride
+		if policy.WAFEnabled {
+			if overrides, err = r.Store.ListWAFOverridesForRender(ctx, d.ID); err != nil {
+				return "", err
+			}
+		}
 
 		// Group proxied origins by hostname (multiple origins => LB pool).
 		pools := map[string][]string{}
@@ -96,7 +102,7 @@ func (r *Renderer) Render(ctx context.Context) (string, error) {
 		}
 		sort.Strings(hosts)
 		for _, host := range hosts {
-			r.writeSite(&b, host, policy, pools[host], blocks, hasFeeds)
+			r.writeSite(&b, host, policy, pools[host], blocks, hasFeeds, overrides)
 		}
 	}
 	return b.String(), nil
@@ -118,7 +124,7 @@ func threatFeedSnippet(cidrs []string) (string, bool) {
 	return b.String(), true
 }
 
-func (r *Renderer) writeSite(b *strings.Builder, host string, p *store.SecurityPolicy, origins []string, blocks []store.Blocklist, importFeeds bool) {
+func (r *Renderer) writeSite(b *strings.Builder, host string, p *store.SecurityPolicy, origins []string, blocks []store.Blocklist, importFeeds bool, wafOverrides []store.WAFRouteOverride) {
 	fmt.Fprintf(b, "%s {\n", host)
 
 	if r.Cfg.EdgeTLSMode == "internal" {
@@ -164,17 +170,7 @@ func (r *Renderer) writeSite(b *strings.Builder, host string, p *store.SecurityP
 
 	// WAF (Coraza + OWASP CRS, baked into the image at /etc/caddy/coraza).
 	if p.WAFEnabled {
-		engine := "On"
-		if p.WAFMode == "detect" {
-			engine = "DetectionOnly"
-		}
-		fmt.Fprintf(b, "\tcoraza_waf {\n\t\tdirectives `\n"+
-			"\t\t\tInclude /etc/caddy/coraza/coraza.conf\n"+
-			"\t\t\tInclude /etc/caddy/coraza/crs-setup.conf\n"+
-			"\t\t\tSecAction \"id:900110,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d\"\n"+
-			"\t\t\tInclude /etc/caddy/coraza/rules/*.conf\n"+
-			"\t\t\tSecRuleEngine %s\n"+
-			"\t\t`\n\t}\n", p.WAFParanoia, engine)
+		fmt.Fprintf(b, "\tcoraza_waf {\n\t\tdirectives `\n%s\t\t`\n\t}\n", corazaDirectives(p, wafOverrides))
 	}
 
 	// Edge cache (Souin/cache-handler, Redis-backed; global block in base).
@@ -186,6 +182,92 @@ func (r *Renderer) writeSite(b *strings.Builder, host string, p *store.SecurityP
 	fmt.Fprintf(b, "\treverse_proxy %s {\n\t\tlb_policy round_robin\n\t\tlb_try_duration 5s\n\t\thealth_uri /\n\t\thealth_interval 15s\n\t}\n", strings.Join(origins, " "))
 
 	b.WriteString("}\n\n")
+}
+
+// wafOverrideBaseID is the first id assigned to generated per-route override
+// rules. It sits above the OWASP CRS range (900000–999999) to avoid collisions.
+const wafOverrideBaseID = 9010000
+
+// corazaDirectives builds the inner SecLang for a domain's coraza_waf block:
+// the CRS includes, per-route override rules (phase 1, before CRS evaluates),
+// the operator's validated custom rules (after CRS), and the engine mode.
+// overrides must already be filtered to enabled and ordered for determinism.
+func corazaDirectives(p *store.SecurityPolicy, overrides []store.WAFRouteOverride) string {
+	engine := "On"
+	if p.WAFMode == "detect" {
+		engine = "DetectionOnly"
+	}
+	var b strings.Builder
+	w := func(s string) { b.WriteString("\t\t\t"); b.WriteString(s); b.WriteByte('\n') }
+
+	w("Include /etc/caddy/coraza/coraza.conf")
+	w("Include /etc/caddy/coraza/crs-setup.conf")
+	fmt.Fprintf(&b, "\t\t\tSecAction \"id:900110,phase:1,pass,nolog,setvar:tx.blocking_paranoia_level=%d\"\n", p.WAFParanoia)
+
+	id := wafOverrideBaseID
+	for _, o := range overrides {
+		if rule, ok := wafOverrideRule(id, o); ok {
+			w(rule)
+			id++
+		}
+	}
+
+	w("Include /etc/caddy/coraza/rules/*.conf")
+
+	if cr := strings.TrimSpace(p.WAFCustomRules); cr != "" {
+		for _, line := range strings.Split(cr, "\n") {
+			if t := strings.TrimSpace(strings.TrimRight(line, "\r")); t != "" {
+				w(t)
+			}
+		}
+	}
+
+	w("SecRuleEngine " + engine)
+	return b.String()
+}
+
+// wafOverrideRule renders one per-route override as a path-scoped SecRule. It
+// returns (rule, false) when the override is a no-op (mode inherit, no excluded
+// rules, no paranoia override).
+func wafOverrideRule(id int, o store.WAFRouteOverride) (string, bool) {
+	var actions []string
+	switch o.Mode {
+	case "off":
+		actions = append(actions, "ctl:ruleEngine=Off")
+	case "detect":
+		actions = append(actions, "ctl:ruleEngine=DetectionOnly")
+	}
+	for _, rid := range parseRuleIDs(o.ExcludedRules) {
+		actions = append(actions, "ctl:ruleRemoveById="+rid)
+	}
+	if o.Paranoia != nil {
+		actions = append(actions,
+			fmt.Sprintf("setvar:tx.blocking_paranoia_level=%d", *o.Paranoia),
+			fmt.Sprintf("setvar:tx.detection_paranoia_level=%d", *o.Paranoia))
+	}
+	if len(actions) == 0 {
+		return "", false
+	}
+	return fmt.Sprintf(`SecRule REQUEST_URI "@beginsWith %s" "id:%d,phase:1,pass,nolog,t:none,%s"`,
+		sanitizeWAFPath(o.Path), id, strings.Join(actions, ",")), true
+}
+
+// parseRuleIDs extracts the numeric CRS rule IDs from a free-form list
+// (space/comma separated). Non-numeric tokens are dropped.
+func parseRuleIDs(s string) []string {
+	var out []string
+	for _, tok := range strings.FieldsFunc(s, func(r rune) bool { return r == ' ' || r == ',' || r == '\t' }) {
+		if tok != "" && strings.IndexFunc(tok, func(r rune) bool { return r < '0' || r > '9' }) == -1 {
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+// sanitizeWAFPath strips characters that would break out of the SecRule's quoted
+// operator argument (defence in depth; the API also validates on write).
+func sanitizeWAFPath(p string) string {
+	return strings.NewReplacer("\"", "", "`", "", "\n", "", "\r", "").Replace(p)
 }
 
 // Rebuild renders the current config, and if it changed from the latest stored

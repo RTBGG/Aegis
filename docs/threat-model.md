@@ -83,6 +83,28 @@ Admins can assume a user's identity for support, with guardrails:
   row (actor, target, IP), surfaced in Admin → Audit log. A persistent banner
   shows the operator they are impersonating.
 
+## Custom WAF rules import (Phase 2)
+
+Tenants can import SecLang rules and per-route WAF overrides, which feed the
+shared edge Coraza engine — a sensitive surface:
+
+- **Directive allowlist**: only `SecRule`, `SecAction`, `SecMarker`, and the
+  `SecRule{Remove,Update}*` family are accepted. Directives that do I/O, fetch
+  remote rules, or change engine-wide behaviour (`Include`, `SecRuleEngine`,
+  `SecRemoteRules`, `SecAuditLog*`, `Sec*Dir`, …) are rejected.
+- **Injection containment**: input is size-capped, must not contain backticks
+  (which would break out of the Caddyfile string), and each directive's quotes
+  must balance — catching the syntax errors most likely to fail edge config
+  loading. Override paths are validated and rule IDs must be numeric, so they
+  cannot break out of the generated `SecRule` operator argument.
+- **Residual risk**: validation is structural, not a full Coraza compile, so a
+  semantically-invalid rule could still fail provisioning at the edge. Caddy's
+  `/load` is atomic — it keeps the last-good config — so live traffic is
+  unaffected, but config propagation stalls until the rule is fixed. Operators
+  should stage rules with the per-route/global "Detect only" mode first.
+- **Authorization**: all WAF tuning is scoped to the owning account; overrides
+  delete by `(id, domain_id)`.
+
 ## Known Phase 1 limitations (hardening backlog)
 
 - Agent auth is a shared bearer token, not per-node mTLS (P3).
