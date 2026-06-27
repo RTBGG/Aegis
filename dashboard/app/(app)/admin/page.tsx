@@ -1,16 +1,17 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import type { AdminUser, Edge, Blocklist, ThreatFeed, ImpersonationAuditEntry } from "@/lib/types";
+import type { AdminUser, Edge, Blocklist, ThreatFeed, EmailConfig, ImpersonationAuditEntry } from "@/lib/types";
 import { Button, Input, Select, Field, Card, Badge, Toggle, ErrorText } from "@/components/ui";
 
-type Tab = "users" | "edges" | "blocklists" | "feeds" | "audit" | "enrollment";
+type Tab = "users" | "edges" | "blocklists" | "feeds" | "email" | "audit" | "enrollment";
 
 const TAB_LABELS: Record<Tab, string> = {
   users: "Users",
   edges: "Edges",
   blocklists: "Blocklists",
   feeds: "Threat feeds",
+  email: "Email",
   audit: "Audit log",
   enrollment: "Enrollment",
 };
@@ -21,7 +22,7 @@ export default function AdminPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Admin</h1>
       <div className="flex gap-1 border-b border-edge">
-        {(["users", "edges", "blocklists", "feeds", "audit", "enrollment"] as Tab[]).map((t) => (
+        {(["users", "edges", "blocklists", "feeds", "email", "audit", "enrollment"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -35,6 +36,7 @@ export default function AdminPage() {
       {tab === "edges" && <Edges />}
       {tab === "blocklists" && <Blocklists />}
       {tab === "feeds" && <ThreatFeeds />}
+      {tab === "email" && <EmailSettings />}
       {tab === "audit" && <AuditLog />}
       {tab === "enrollment" && <Enrollment />}
     </div>
@@ -321,6 +323,60 @@ function ThreatFeeds() {
         )}
       </Card>
     </div>
+  );
+}
+
+function EmailSettings() {
+  const [cfg, setCfg] = useState<EmailConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  useEffect(() => {
+    api.get<EmailConfig>("/admin/email-config").then(setCfg).catch(() => {});
+  }, []);
+  async function sendTest() {
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await api.post<{ sent_to: string }>("/admin/test-email");
+      setResult({ ok: true, msg: `Sent to ${r.sent_to}` });
+    } catch (e) {
+      setResult({ ok: false, msg: e instanceof ApiError ? e.message : "Send failed" });
+    } finally {
+      setBusy(false);
+    }
+  }
+  if (!cfg) return <div className="text-slate-400">Loading…</div>;
+  const rows: [string, string][] = [
+    ["Mode", cfg.mailer === "smtp" ? "SMTP" : "Log (dev — prints to server console)"],
+    ["Server", cfg.addr],
+    ["From", cfg.from],
+    ["TLS", cfg.tls],
+    ["Auth", cfg.auth ? "enabled" : "none"],
+  ];
+  return (
+    <Card title="Outbound email (SMTP)">
+      <table className="w-full text-sm">
+        <tbody className="divide-y divide-edge">
+          {rows.map(([k, v]) => (
+            <tr key={k}>
+              <td className="py-2 text-slate-400">{k}</td>
+              <td className="text-right font-mono text-slate-200">{v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-3 text-xs text-slate-500">
+        Configure via environment: <span className="font-mono">MAILER</span>, <span className="font-mono">SMTP_ADDR</span>,{" "}
+        <span className="font-mono">SMTP_USERNAME</span>/<span className="font-mono">SMTP_PASSWORD</span>,{" "}
+        <span className="font-mono">SMTP_FROM</span>, <span className="font-mono">SMTP_TLS</span>.
+      </p>
+      <div className="mt-4 flex items-center gap-3">
+        <Button onClick={sendTest} disabled={busy}>
+          {busy ? "Sending…" : "Send test email"}
+        </Button>
+        {result && <span className={`text-sm ${result.ok ? "text-emerald-300" : "text-red-400"}`}>{result.msg}</span>}
+      </div>
+    </Card>
   );
 }
 

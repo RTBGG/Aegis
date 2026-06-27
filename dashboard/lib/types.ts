@@ -65,6 +65,14 @@ export interface Impersonator {
   email: string;
 }
 
+export interface EmailConfig {
+  mailer: string;
+  addr: string;
+  from: string;
+  tls: string;
+  auth: boolean;
+}
+
 export interface ImpersonationAuditEntry {
   id: number;
   action: string;

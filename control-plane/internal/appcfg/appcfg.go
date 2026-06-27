@@ -23,8 +23,8 @@ type Config struct {
 	BootstrapAdminEmail    string
 	BootstrapAdminPassword string
 
-	Mailer   string // "log" | "smtp"
-	SMTPAddr string
+	Mailer string // "log" | "smtp"
+	SMTP   SMTPConfig
 
 	AgentToken string
 
@@ -43,6 +43,16 @@ type Config struct {
 	ThreatFeedSync bool
 }
 
+// SMTPConfig holds outbound mail settings used when MAILER=smtp.
+type SMTPConfig struct {
+	Addr     string // host:port, e.g. smtp.example.com:587
+	Username string // empty => no SMTP AUTH (e.g. Mailpit)
+	Password string
+	From     string // envelope + header From address
+	TLS      string // "starttls" (587) | "tls" (465, implicit) | "none"
+	Insecure bool   // skip TLS cert verification (self-signed internal relays only)
+}
+
 // Load reads configuration from the environment, applying defaults and
 // validating required values.
 func Load() (*Config, error) {
@@ -56,16 +66,23 @@ func Load() (*Config, error) {
 		BootstrapAdminEmail:    env("BOOTSTRAP_ADMIN_EMAIL", "admin@example.com"),
 		BootstrapAdminPassword: os.Getenv("BOOTSTRAP_ADMIN_PASSWORD"),
 		Mailer:                 env("MAILER", "log"),
-		SMTPAddr:               env("SMTP_ADDR", "mailpit:1025"),
-		AgentToken:             os.Getenv("AGENT_TOKEN"),
-		PDNSAPIURL:             env("PDNS_API_URL", "http://powerdns:8081"),
-		PDNSAPIKey:             os.Getenv("PDNS_API_KEY"),
-		AssignedNS:             [2]string{env("ASSIGNED_NS1", "ns1.aegis.example"), env("ASSIGNED_NS2", "ns2.aegis.example")},
-		EdgePublicIP:           env("EDGE_PUBLIC_IP", "127.0.0.1"),
-		EdgeTLSMode:            env("EDGE_TLS_MODE", "internal"),
-		ACMEEmail:              env("ACME_EMAIL", "admin@example.com"),
-		ChallengeSecret:        os.Getenv("CHALLENGE_SECRET"),
-		ThreatFeedSync:         envBool("THREATFEED_SYNC", true),
+		SMTP: SMTPConfig{
+			Addr:     env("SMTP_ADDR", "mailpit:1025"),
+			Username: os.Getenv("SMTP_USERNAME"),
+			Password: os.Getenv("SMTP_PASSWORD"),
+			From:     env("SMTP_FROM", "no-reply@"+env("AEGIS_BRAND", "Aegis")),
+			TLS:      strings.ToLower(env("SMTP_TLS", "starttls")),
+			Insecure: envBool("SMTP_TLS_INSECURE", false),
+		},
+		AgentToken:      os.Getenv("AGENT_TOKEN"),
+		PDNSAPIURL:      env("PDNS_API_URL", "http://powerdns:8081"),
+		PDNSAPIKey:      os.Getenv("PDNS_API_KEY"),
+		AssignedNS:      [2]string{env("ASSIGNED_NS1", "ns1.aegis.example"), env("ASSIGNED_NS2", "ns2.aegis.example")},
+		EdgePublicIP:    env("EDGE_PUBLIC_IP", "127.0.0.1"),
+		EdgeTLSMode:     env("EDGE_TLS_MODE", "internal"),
+		ACMEEmail:       env("ACME_EMAIL", "admin@example.com"),
+		ChallengeSecret: os.Getenv("CHALLENGE_SECRET"),
+		ThreatFeedSync:  envBool("THREATFEED_SYNC", true),
 	}
 	c.SessionSecret = []byte(os.Getenv("SESSION_SECRET"))
 	c.CSRFSecret = []byte(os.Getenv("CSRF_SECRET"))
@@ -91,6 +108,16 @@ func Load() (*Config, error) {
 	}
 	if c.EdgeTLSMode != "internal" && c.EdgeTLSMode != "acme" {
 		return nil, fmt.Errorf("EDGE_TLS_MODE must be 'internal' or 'acme', got %q", c.EdgeTLSMode)
+	}
+	if c.Mailer == "smtp" {
+		switch c.SMTP.TLS {
+		case "starttls", "tls", "none":
+		default:
+			return nil, fmt.Errorf("SMTP_TLS must be 'starttls', 'tls' or 'none', got %q", c.SMTP.TLS)
+		}
+		if c.SMTP.Addr == "" {
+			return nil, fmt.Errorf("SMTP_ADDR is required when MAILER=smtp")
+		}
 	}
 	return c, nil
 }
