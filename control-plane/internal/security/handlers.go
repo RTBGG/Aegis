@@ -52,7 +52,13 @@ type policyDTO struct {
 	CacheEnabled     bool   `json:"cache_enabled"`
 	CacheTTL         int32  `json:"cache_ttl"`
 	BotProtection    string `json:"bot_protection"`
+	BotAllowVerified bool   `json:"bot_allow_verified"`
 	ChallengeEnabled bool   `json:"challenge_enabled"`
+	ChallengeMode    string `json:"challenge_mode"`
+	CaptchaProvider  string `json:"captcha_provider"`
+	CaptchaSitekey   string `json:"captcha_sitekey"`
+	CaptchaSecret    string `json:"captcha_secret"`     // write-only; never returned
+	CaptchaSecretSet bool   `json:"captcha_secret_set"` // read-only
 }
 
 func toPolicyDTO(p *store.SecurityPolicy) policyDTO {
@@ -61,7 +67,10 @@ func toPolicyDTO(p *store.SecurityPolicy) policyDTO {
 		WAFEnabled: p.WAFEnabled, WAFParanoia: p.WAFParanoia, WAFMode: p.WAFMode, WAFCustomRules: p.WAFCustomRules,
 		RateLimitEnabled: p.RateLimitEnabled, RateLimitRPM: p.RateLimitRPM, RateLimitBurst: p.RateLimitBurst,
 		CacheEnabled: p.CacheEnabled, CacheTTL: p.CacheTTL,
-		BotProtection: p.BotProtection, ChallengeEnabled: p.ChallengeEnabled,
+		BotProtection: p.BotProtection, BotAllowVerified: p.BotAllowVerified,
+		ChallengeEnabled: p.ChallengeEnabled, ChallengeMode: p.ChallengeMode,
+		CaptchaProvider: p.CaptchaProvider, CaptchaSitekey: p.CaptchaSitekey,
+		CaptchaSecret: "", CaptchaSecretSet: p.CaptchaSecret != "",
 	}
 }
 
@@ -83,12 +92,20 @@ func (s *Service) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	existing, err := s.Store.GetOrCreatePolicy(r.Context(), d.ID)
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not load policy")
+		return
+	}
 	var in policyDTO
 	if err := web.Decode(w, r, &in); err != nil {
 		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	if msg, ok := validatePolicy(&in); !ok {
+	if in.ChallengeMode == "" {
+		in.ChallengeMode = "pow"
+	}
+	if msg, ok := validatePolicy(&in, existing.CaptchaSecret != ""); !ok {
 		web.Error(w, http.StatusBadRequest, "validation", msg)
 		return
 	}
@@ -98,7 +115,9 @@ func (s *Service) Update(w http.ResponseWriter, r *http.Request) {
 		WAFEnabled: in.WAFEnabled, WAFParanoia: in.WAFParanoia, WAFMode: in.WAFMode, WAFCustomRules: in.WAFCustomRules,
 		RateLimitEnabled: in.RateLimitEnabled, RateLimitRPM: in.RateLimitRPM, RateLimitBurst: in.RateLimitBurst,
 		CacheEnabled: in.CacheEnabled, CacheTTL: in.CacheTTL,
-		BotProtection: in.BotProtection, ChallengeEnabled: in.ChallengeEnabled,
+		BotProtection: in.BotProtection, BotAllowVerified: in.BotAllowVerified,
+		ChallengeEnabled: in.ChallengeEnabled, ChallengeMode: in.ChallengeMode,
+		CaptchaProvider: in.CaptchaProvider, CaptchaSitekey: in.CaptchaSitekey, CaptchaSecret: in.CaptchaSecret,
 	}
 	out, err := s.Store.UpdatePolicy(r.Context(), p)
 	if err != nil {
@@ -109,7 +128,7 @@ func (s *Service) Update(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"security": toPolicyDTO(out)})
 }
 
-func validatePolicy(p *policyDTO) (string, bool) {
+func validatePolicy(p *policyDTO, captchaSecretSet bool) (string, bool) {
 	if p.WAFParanoia < 1 || p.WAFParanoia > 4 {
 		return "waf_paranoia must be 1-4", false
 	}
@@ -134,6 +153,39 @@ func validatePolicy(p *policyDTO) (string, bool) {
 	}
 	if err := validateCustomSecRules(p.WAFCustomRules); err != nil {
 		return err.Error(), false
+	}
+	if msg, ok := validateChallenge(p, captchaSecretSet); !ok {
+		return msg, false
+	}
+	return "", true
+}
+
+// validateChallenge checks the challenge/CAPTCHA settings. captchaSecretSet
+// reports whether a secret is already stored (a blank secret on update keeps it).
+func validateChallenge(p *policyDTO, captchaSecretSet bool) (string, bool) {
+	switch p.ChallengeMode {
+	case "pow", "captcha":
+	default:
+		return "challenge_mode must be pow or captcha", false
+	}
+	switch p.CaptchaProvider {
+	case "", "turnstile", "hcaptcha", "recaptcha":
+	default:
+		return "captcha_provider must be turnstile, hcaptcha or recaptcha", false
+	}
+	if strings.ContainsAny(p.CaptchaSitekey+p.CaptchaSecret, " \t\r\n") {
+		return "captcha sitekey/secret must not contain whitespace", false
+	}
+	if p.ChallengeMode == "captcha" {
+		if p.CaptchaProvider == "" {
+			return "captcha_provider is required when challenge_mode is captcha", false
+		}
+		if p.CaptchaSitekey == "" {
+			return "captcha_sitekey is required when challenge_mode is captcha", false
+		}
+		if p.CaptchaSecret == "" && !captchaSecretSet {
+			return "captcha_secret is required when challenge_mode is captcha", false
+		}
 	}
 	return "", true
 }

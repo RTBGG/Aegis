@@ -57,7 +57,13 @@ export interface SecurityPolicy {
   cache_enabled: boolean;
   cache_ttl: number;
   bot_protection: "off" | "low" | "medium" | "high";
+  bot_allow_verified: boolean;
   challenge_enabled: boolean;
+  challenge_mode: "pow" | "captcha";
+  captcha_provider: "" | "turnstile" | "hcaptcha" | "recaptcha";
+  captcha_sitekey: string;
+  captcha_secret: string;
+  captcha_secret_set: boolean;
 }
 
 export interface MetricsSummary {

@@ -65,7 +65,12 @@ type SecurityPolicy struct {
 	CacheEnabled     bool      `db:"cache_enabled"`
 	CacheTTL         int32     `db:"cache_ttl"`
 	BotProtection    string    `db:"bot_protection"`
+	BotAllowVerified bool      `db:"bot_allow_verified"`
 	ChallengeEnabled bool      `db:"challenge_enabled"`
+	ChallengeMode    string    `db:"challenge_mode"`
+	CaptchaProvider  string    `db:"captcha_provider"`
+	CaptchaSitekey   string    `db:"captcha_sitekey"`
+	CaptchaSecret    string    `db:"captcha_secret"`
 	UpdatedAt        time.Time `db:"updated_at"`
 }
 

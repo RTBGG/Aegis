@@ -1,11 +1,14 @@
 // Package botscore is a Caddy HTTP handler that assigns a heuristic risk score
-// to each request (UA/JA4H signals, missing headers, per-IP request rate) and
-// either blocks it or flags it for the challenge handler.
+// to each request (UA/JA4H signals, missing/inconsistent headers, suspicious
+// paths, per-IP request rate) and either blocks it, flags it for the challenge
+// handler, or lets it through. Verified search-engine crawlers can be allowed
+// past scoring.
 package botscore
 
 import (
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/caddyserver/caddy/v2"
@@ -25,6 +28,9 @@ func init() {
 type Handler struct {
 	// Sensitivity is one of low|medium|high (default medium).
 	Sensitivity string `json:"sensitivity,omitempty"`
+	// AllowVerifiedBots lets well-known crawlers (Googlebot, Bingbot, …) skip
+	// scoring. The match is UA-based and therefore advisory (UA is spoofable).
+	AllowVerifiedBots bool `json:"allow_verified_bots,omitempty"`
 }
 
 func (Handler) CaddyModule() caddy.ModuleInfo {
@@ -46,40 +52,123 @@ var suspectAgents = []string{
 	"libwww", "java/", "headless", "phantomjs", "bot", "spider", "crawler",
 }
 
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+// verifiedBots are UA fragments of crawlers operators usually want to allow.
+var verifiedBots = []string{
+	"googlebot", "bingbot", "slurp", "duckduckbot", "baiduspider", "yandexbot",
+	"applebot", "facebookexternalhit", "twitterbot", "linkedinbot",
+	"uptimerobot", "pingdom",
+}
+
+// suspectPaths are scanner/probe targets that strongly indicate automation.
+var suspectPaths = []string{
+	"/wp-login", "/wp-admin", "/xmlrpc.php", "/.env", "/.git", "/phpmyadmin",
+	"/.aws", "/actuator", "/solr/", "/vendor/phpunit", "/.ssh", "/config.json",
+}
+
+// signals are the boolean/numeric features the score is computed from. Kept
+// separate from the request so scoring is a pure, testable function.
+type signals struct {
+	uaEmpty           bool
+	uaSuspect         bool
+	missingAccept     bool
+	missingAcceptLang bool
+	missingAcceptEnc  bool
+	missingCookies    bool
+	missingSecFetch   bool // UA claims Chromium but sent no Sec-Fetch-* headers
+	suspectPath       bool
+	rate              int
+}
+
+// scoreSignals turns request features into a 0..N risk score.
+func scoreSignals(s signals) int {
 	score := 0
-	ua := strings.ToLower(r.UserAgent())
-	if ua == "" {
+	switch {
+	case s.uaEmpty:
 		score += 40
-	} else {
+	case s.uaSuspect:
+		score += 35
+	}
+	if s.missingAccept {
+		score += 15
+	}
+	if s.missingAcceptLang {
+		score += 10
+	}
+	if s.missingAcceptEnc {
+		score += 10
+	}
+	if s.missingCookies {
+		score += 10
+	}
+	if s.missingSecFetch {
+		score += 20
+	}
+	if s.suspectPath {
+		score += 30
+	}
+	switch {
+	case s.rate > 300:
+		score += 50
+	case s.rate > 120:
+		score += 25
+	case s.rate > 60:
+		score += 10
+	}
+	return score
+}
+
+func isVerifiedBot(ua string) bool {
+	for _, b := range verifiedBots {
+		if strings.Contains(ua, b) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractSignals(r *http.Request, ua string) signals {
+	claimsChromium := strings.Contains(ua, "chrome") || strings.Contains(ua, "chromium") || strings.Contains(ua, "edg")
+	var sig signals
+	sig.uaEmpty = ua == ""
+	if !sig.uaEmpty {
 		for _, s := range suspectAgents {
 			if strings.Contains(ua, s) {
-				score += 35
+				sig.uaSuspect = true
 				break
 			}
 		}
 	}
-	if r.Header.Get("Accept") == "" {
-		score += 15
+	sig.missingAccept = r.Header.Get("Accept") == ""
+	sig.missingAcceptLang = r.Header.Get("Accept-Language") == ""
+	sig.missingAcceptEnc = r.Header.Get("Accept-Encoding") == ""
+	sig.missingCookies = len(r.Cookies()) == 0
+	sig.missingSecFetch = claimsChromium && r.Header.Get("Sec-Fetch-Mode") == "" && r.Header.Get("Sec-Ch-Ua") == ""
+	sig.suspectPath = matchesSuspectPath(r.URL.Path)
+	sig.rate = metrics.RequestRate(clientIP(r))
+	return sig
+}
+
+func matchesSuspectPath(p string) bool {
+	p = strings.ToLower(p)
+	for _, sp := range suspectPaths {
+		if strings.Contains(p, sp) {
+			return true
+		}
 	}
-	if r.Header.Get("Accept-Language") == "" {
-		score += 10
-	}
-	if len(r.Cookies()) == 0 {
-		score += 10
+	return false
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	ua := strings.ToLower(r.UserAgent())
+
+	if h.AllowVerifiedBots && isVerifiedBot(ua) {
+		caddyhttp.SetVar(r.Context(), "bot_verified", true)
+		return next.ServeHTTP(w, r)
 	}
 
-	ip := clientIP(r)
-	switch rate := metrics.RequestRate(ip); {
-	case rate > 300:
-		score += 50
-	case rate > 120:
-		score += 25
-	case rate > 60:
-		score += 10
-	}
-
+	score := scoreSignals(extractSignals(r, ua))
 	caddyhttp.SetVar(r.Context(), "bot_score", score)
+	r.Header.Set("X-Aegis-Bot-Score", strconv.Itoa(score))
 
 	challengeT, blockT := thresholds(h.Sensitivity)
 	switch {
@@ -123,6 +212,8 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 				h.Sensitivity = d.Val()
+			case "allow_verified_bots":
+				h.AllowVerifiedBots = true
 			default:
 				return d.Errf("unknown botscore option %q", d.Val())
 			}

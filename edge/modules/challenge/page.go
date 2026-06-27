@@ -65,3 +65,40 @@ const interstitialHTML = `<!doctype html>
 </script>
 </body>
 </html>`
+
+// captchaHTML renders a pluggable CAPTCHA widget. __SCRIPT__ (provider api.js),
+// __WIDGET__ (widget element class), __SITEKEY__, __SUBMIT__ (verify path) and
+// __TO__ (escaped return path) are substituted in. The widget's callback
+// auto-submits the form, whose POST carries the provider response field.
+const captchaHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify you are human</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         display:flex; min-height:100vh; align-items:center; justify-content:center;
+         margin:0; background:#0b1220; color:#e5e9f0; }
+  .card { max-width:30rem; padding:2.5rem; text-align:center; }
+  h1 { font-size:1.25rem; font-weight:600; margin:0 0 0.5rem; }
+  p { color:#9aa6c0; font-size:0.9rem; margin:0.25rem 0 1.25rem; }
+  .widget { display:flex; justify-content:center; }
+</style>
+<script src="__SCRIPT__" async defer></script>
+</head>
+<body>
+  <div class="card">
+    <h1>Verify you are human</h1>
+    <p>Complete the check below to continue.</p>
+    <form id="aegis-cap" method="POST" action="__SUBMIT__?to=__TO__">
+      <div class="widget __WIDGET__" data-sitekey="__SITEKEY__" data-callback="aegisCaptchaDone"></div>
+      <noscript><p>JavaScript is required to complete this check.</p></noscript>
+    </form>
+  </div>
+<script>
+  function aegisCaptchaDone(){ document.getElementById('aegis-cap').submit(); }
+</script>
+</body>
+</html>`
