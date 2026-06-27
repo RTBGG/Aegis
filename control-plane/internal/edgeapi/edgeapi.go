@@ -15,6 +15,7 @@ import (
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/clickhouse"
 	"github.com/aegis/control-plane/internal/config"
+	"github.com/aegis/control-plane/internal/geoip"
 	"github.com/aegis/control-plane/internal/store"
 	"github.com/aegis/control-plane/internal/web"
 )
@@ -23,20 +24,39 @@ type API struct {
 	Store *store.Store
 	Cfg   *appcfg.Config
 	CH    *clickhouse.Client
+	Geo   *geoip.DB
 }
 
-func New(st *store.Store, cfg *appcfg.Config, ch *clickhouse.Client) *API {
-	return &API{Store: st, Cfg: cfg, CH: ch}
+func New(st *store.Store, cfg *appcfg.Config, ch *clickhouse.Client, geo *geoip.DB) *API {
+	return &API{Store: st, Cfg: cfg, CH: ch, Geo: geo}
 }
 
 const maxEventsBatch = 20000
 
-// Events ingests a batch of per-request analytics events from the agent and
-// inserts them into ClickHouse. When ClickHouse is disabled the batch is
-// accepted and dropped so the edge's Redis queue still drains.
+// ingestEvent mirrors the edge event plus the GeoIP fields we enrich on ingest.
+type ingestEvent struct {
+	TS      int64  `json:"ts"`
+	Host    string `json:"host"`
+	IP      string `json:"ip"`
+	Method  string `json:"method"`
+	Path    string `json:"path"`
+	Status  int    `json:"status"`
+	Bytes   int64  `json:"bytes"`
+	UA      string `json:"ua"`
+	JA4H    string `json:"ja4h"`
+	Action  string `json:"action"`
+	Country string `json:"country"`
+	ASN     uint32 `json:"asn"`
+	ASNOrg  string `json:"asn_org"`
+}
+
+// Events ingests a batch of per-request analytics events from the agent,
+// enriches them with GeoIP (country + ASN), and inserts them into ClickHouse.
+// When ClickHouse is disabled the batch is accepted and dropped so the edge's
+// Redis queue still drains.
 func (a *API) Events(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Events []json.RawMessage `json:"events"`
+		Events []ingestEvent `json:"events"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<20))
 	if err := dec.Decode(&in); err != nil {
@@ -50,9 +70,16 @@ func (a *API) Events(w http.ResponseWriter, r *http.Request) {
 	if len(in.Events) > maxEventsBatch {
 		in.Events = in.Events[:maxEventsBatch]
 	}
-	lines := make([]string, len(in.Events))
-	for i, e := range in.Events {
-		lines[i] = string(e)
+	lines := make([]string, 0, len(in.Events))
+	for _, e := range in.Events {
+		if a.Geo != nil {
+			e.Country, e.ASN, e.ASNOrg = a.Geo.Lookup(e.IP)
+		}
+		b, err := json.Marshal(e)
+		if err != nil {
+			continue
+		}
+		lines = append(lines, string(b))
 	}
 	if err := a.CH.Insert(r.Context(), "aegis_requests", strings.Join(lines, "\n")); err != nil {
 		web.Error(w, http.StatusBadGateway, "analytics_error", "insert failed: "+err.Error())

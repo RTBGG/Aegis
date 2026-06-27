@@ -105,8 +105,14 @@ dashboard: GET /domains/{id}/insights?window= → time-series, unique visitors,
 - **Optional**: gated by `CLICKHOUSE_URL`. Disabled → the events endpoint
   drains-and-drops (so Redis doesn't grow) and `/insights` returns
   `enabled:false`; the dashboard shows a hint and the coarse counters remain.
+- **GeoIP enrichment** (`internal/geoip`): on ingest, each event's client IP is
+  looked up against the free, public-domain (PDDL) iptoasn.com IP-to-ASN database
+  — loaded into a sorted in-memory range table and refreshed daily — adding
+  `country`, `asn` and `asn_org`. The lookup is local (no per-request external
+  calls); gated by `GEOIP_ENABLED`. This powers top-countries / top-networks.
 - **Queries** (`internal/analytics/insights.go`) filter by the domain's apex +
-  subdomains and use ClickHouse query parameters (no SQL injection).
+  subdomains and use ClickHouse query parameters (no SQL injection); they return
+  summary, time-series, top paths, status codes, top countries and top ASNs.
 
 ## Bot scoring + challenges (Phase 2)
 

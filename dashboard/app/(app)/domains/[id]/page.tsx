@@ -553,6 +553,10 @@ function AnalyticsTab({ domainId }: { domainId: string }) {
   const topPaths = data.top_paths ?? [];
   const maxPath = Math.max(1, ...topPaths.map((p) => p.count));
   const statuses = data.statuses ?? [];
+  const countries = data.top_countries ?? [];
+  const maxCountry = Math.max(1, ...countries.map((c) => c.count));
+  const asns = data.top_asns ?? [];
+  const maxAsn = Math.max(1, ...asns.map((a) => a.count));
 
   return (
     <div className="space-y-5">
@@ -628,6 +632,53 @@ function AnalyticsTab({ domainId }: { domainId: string }) {
             </table>
           )}
         </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+        <Card title="Top countries">
+          {countries.length === 0 ? (
+            <p className="text-sm text-slate-400">No geo data yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {countries.map((c) => (
+                <BarRow key={c.country} label={`${flagEmoji(c.country)} ${c.country}`} count={c.count} max={maxCountry} />
+              ))}
+            </div>
+          )}
+        </Card>
+        <Card title="Top networks (ASN)">
+          {asns.length === 0 ? (
+            <p className="text-sm text-slate-400">No geo data yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {asns.map((a) => (
+                <BarRow key={a.asn} label={a.org || `AS${a.asn}`} count={a.count} max={maxAsn} />
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// flagEmoji turns a 2-letter country code into its regional-indicator flag.
+function flagEmoji(cc: string): string {
+  if (!/^[A-Za-z]{2}$/.test(cc)) return "🏳";
+  return String.fromCodePoint(...[...cc.toUpperCase()].map((ch) => 127397 + ch.charCodeAt(0)));
+}
+
+function BarRow({ label, count, max }: { label: string; count: number; max: number }) {
+  return (
+    <div className="text-sm">
+      <div className="flex justify-between gap-2">
+        <span className="truncate text-slate-300" title={label}>
+          {label}
+        </span>
+        <span className="font-mono text-slate-400">{count.toLocaleString()}</span>
+      </div>
+      <div className="mt-1 h-1.5 rounded bg-edge/50">
+        <div className="h-1.5 rounded bg-accent" style={{ width: `${(count / max) * 100}%` }} />
       </div>
     </div>
   );

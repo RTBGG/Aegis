@@ -20,6 +20,7 @@ import (
 	"github.com/aegis/control-plane/internal/dns"
 	"github.com/aegis/control-plane/internal/domains"
 	"github.com/aegis/control-plane/internal/edgeapi"
+	"github.com/aegis/control-plane/internal/geoip"
 	"github.com/aegis/control-plane/internal/httpapi"
 	"github.com/aegis/control-plane/internal/mailer"
 	"github.com/aegis/control-plane/internal/security"
@@ -62,6 +63,14 @@ func main() {
 		ensureClickHouse(ctx, ch)
 	}
 
+	var geoDB *geoip.DB
+	if cfg.GeoIPEnabled {
+		gs := geoip.New(cfg.GeoIPV4URL, cfg.GeoIPV6URL)
+		geoDB = gs.DB()
+		go gs.Run(ctx)
+		slog.Info("geoip enrichment enabled")
+	}
+
 	if err := bootstrap(ctx, st, cfg); err != nil {
 		slog.Error("bootstrap", "err", err)
 		os.Exit(1)
@@ -79,7 +88,7 @@ func main() {
 		Security:  security.New(st, renderer),
 		Analytics: analytics.New(st, ch),
 		Admin:     admin.New(st, cfg, renderer, feeds, ml),
-		Edge:      edgeapi.New(st, cfg, ch),
+		Edge:      edgeapi.New(st, cfg, ch, geoDB),
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

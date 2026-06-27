@@ -51,6 +51,17 @@ type insStatus struct {
 	Count  int64 `json:"count"`
 }
 
+type insCountry struct {
+	Country string `json:"country"`
+	Count   int64  `json:"count"`
+}
+
+type insASN struct {
+	ASN   uint32 `json:"asn"`
+	Org   string `json:"org"`
+	Count int64  `json:"count"`
+}
+
 // Insights returns ClickHouse-backed per-domain analytics (time-series, unique
 // visitors, top paths, status breakdown). Falls back to enabled:false when
 // ClickHouse is not configured.
@@ -112,14 +123,30 @@ func (s *Service) Insights(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, http.StatusBadGateway, "analytics_error", "could not query analytics: "+err.Error())
 		return
 	}
+	topCountries, err := chQuery[insCountry](r.Context(), s, fmt.Sprintf(`
+		SELECT country, count() AS count FROM aegis_requests %s AND country != ''
+		GROUP BY country ORDER BY count DESC LIMIT 10`, where), params)
+	if err != nil {
+		web.Error(w, http.StatusBadGateway, "analytics_error", "could not query analytics: "+err.Error())
+		return
+	}
+	topASNs, err := chQuery[insASN](r.Context(), s, fmt.Sprintf(`
+		SELECT asn, any(asn_org) AS org, count() AS count FROM aegis_requests %s AND asn != 0
+		GROUP BY asn ORDER BY count DESC LIMIT 10`, where), params)
+	if err != nil {
+		web.Error(w, http.StatusBadGateway, "analytics_error", "could not query analytics: "+err.Error())
+		return
+	}
 
 	web.JSON(w, http.StatusOK, map[string]any{
-		"enabled":   true,
-		"window":    label,
-		"summary":   summary,
-		"series":    series,
-		"top_paths": topPaths,
-		"statuses":  statuses,
+		"enabled":       true,
+		"window":        label,
+		"summary":       summary,
+		"series":        series,
+		"top_paths":     topPaths,
+		"statuses":      statuses,
+		"top_countries": topCountries,
+		"top_asns":      topASNs,
 	})
 }
 

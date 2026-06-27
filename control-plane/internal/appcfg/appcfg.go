@@ -49,6 +49,13 @@ type Config struct {
 	ClickHouseDB       string
 	ClickHouseUser     string
 	ClickHousePassword string
+
+	// GeoIP enriches analytics events with country + ASN using the free,
+	// public-domain (PDDL) iptoasn.com IP-to-ASN database. Set GEOIP_ENABLED=off
+	// to skip the download/enrichment.
+	GeoIPEnabled bool
+	GeoIPV4URL   string
+	GeoIPV6URL   string
 }
 
 // SMTPConfig holds outbound mail settings used when MAILER=smtp.
@@ -96,6 +103,10 @@ func Load() (*Config, error) {
 		ClickHouseDB:       env("CLICKHOUSE_DB", "aegis"),
 		ClickHouseUser:     env("CLICKHOUSE_USER", "default"),
 		ClickHousePassword: os.Getenv("CLICKHOUSE_PASSWORD"),
+
+		GeoIPEnabled: envBool("GEOIP_ENABLED", true),
+		GeoIPV4URL:   env("GEOIP_V4_URL", "https://iptoasn.com/data/ip2asn-v4.tsv.gz"),
+		GeoIPV6URL:   env("GEOIP_V6_URL", "https://iptoasn.com/data/ip2asn-v6.tsv.gz"),
 	}
 	c.SessionSecret = []byte(os.Getenv("SESSION_SECRET"))
 	c.CSRFSecret = []byte(os.Getenv("CSRF_SECRET"))
