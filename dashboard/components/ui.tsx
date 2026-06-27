@@ -1,5 +1,5 @@
 "use client";
-import { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes } from "react";
+import { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 
 export function Button({
   children,
@@ -23,6 +23,15 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       className="w-full rounded-md border border-edge bg-ink/60 px-3 py-2 text-sm outline-none focus:border-accent"
+      {...props}
+    />
+  );
+}
+
+export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      className="w-full rounded-md border border-edge bg-ink/60 px-3 py-2 font-mono text-xs outline-none focus:border-accent"
       {...props}
     />
   );

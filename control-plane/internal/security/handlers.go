@@ -4,6 +4,7 @@ package security
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -44,6 +45,7 @@ type policyDTO struct {
 	WAFEnabled       bool   `json:"waf_enabled"`
 	WAFParanoia      int32  `json:"waf_paranoia"`
 	WAFMode          string `json:"waf_mode"`
+	WAFCustomRules   string `json:"waf_custom_rules"`
 	RateLimitEnabled bool   `json:"rate_limit_enabled"`
 	RateLimitRPM     int32  `json:"rate_limit_rpm"`
 	RateLimitBurst   int32  `json:"rate_limit_burst"`
@@ -56,7 +58,7 @@ type policyDTO struct {
 func toPolicyDTO(p *store.SecurityPolicy) policyDTO {
 	return policyDTO{
 		HTTPSRedirect: p.HTTPSRedirect, MinTLS: p.MinTLS,
-		WAFEnabled: p.WAFEnabled, WAFParanoia: p.WAFParanoia, WAFMode: p.WAFMode,
+		WAFEnabled: p.WAFEnabled, WAFParanoia: p.WAFParanoia, WAFMode: p.WAFMode, WAFCustomRules: p.WAFCustomRules,
 		RateLimitEnabled: p.RateLimitEnabled, RateLimitRPM: p.RateLimitRPM, RateLimitBurst: p.RateLimitBurst,
 		CacheEnabled: p.CacheEnabled, CacheTTL: p.CacheTTL,
 		BotProtection: p.BotProtection, ChallengeEnabled: p.ChallengeEnabled,
@@ -93,7 +95,7 @@ func (s *Service) Update(w http.ResponseWriter, r *http.Request) {
 	p := &store.SecurityPolicy{
 		DomainID:      d.ID,
 		HTTPSRedirect: in.HTTPSRedirect, MinTLS: in.MinTLS,
-		WAFEnabled: in.WAFEnabled, WAFParanoia: in.WAFParanoia, WAFMode: in.WAFMode,
+		WAFEnabled: in.WAFEnabled, WAFParanoia: in.WAFParanoia, WAFMode: in.WAFMode, WAFCustomRules: in.WAFCustomRules,
 		RateLimitEnabled: in.RateLimitEnabled, RateLimitRPM: in.RateLimitRPM, RateLimitBurst: in.RateLimitBurst,
 		CacheEnabled: in.CacheEnabled, CacheTTL: in.CacheTTL,
 		BotProtection: in.BotProtection, ChallengeEnabled: in.ChallengeEnabled,
@@ -130,5 +132,114 @@ func validatePolicy(p *policyDTO) (string, bool) {
 	if p.CacheTTL < 0 {
 		return "cache_ttl must be >= 0", false
 	}
+	if err := validateCustomSecRules(p.WAFCustomRules); err != nil {
+		return err.Error(), false
+	}
 	return "", true
+}
+
+// --- per-route WAF overrides ---
+
+type overrideDTO struct {
+	ID            string `json:"id"`
+	Path          string `json:"path"`
+	Mode          string `json:"mode"`
+	ExcludedRules string `json:"excluded_rules"`
+	Paranoia      *int32 `json:"paranoia"`
+	Enabled       bool   `json:"enabled"`
+}
+
+func toOverrideDTO(o store.WAFRouteOverride) overrideDTO {
+	return overrideDTO{
+		ID: o.ID.String(), Path: o.Path, Mode: o.Mode,
+		ExcludedRules: o.ExcludedRules, Paranoia: o.Paranoia, Enabled: o.Enabled,
+	}
+}
+
+func (s *Service) ListOverrides(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.ownDomain(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.Store.ListWAFOverrides(r.Context(), d.ID)
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not list overrides")
+		return
+	}
+	out := make([]overrideDTO, len(rows))
+	for i, o := range rows {
+		out[i] = toOverrideDTO(o)
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"overrides": out})
+}
+
+func (s *Service) CreateOverride(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.ownDomain(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Path          string `json:"path"`
+		Mode          string `json:"mode"`
+		ExcludedRules string `json:"excluded_rules"`
+		Paranoia      *int32 `json:"paranoia"`
+	}
+	if err := web.Decode(w, r, &in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	in.Path = strings.TrimSpace(in.Path)
+	if in.Mode == "" {
+		in.Mode = "inherit"
+	}
+	if err := validateWAFPath(in.Path); err != nil {
+		web.Error(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	switch in.Mode {
+	case "inherit", "off", "detect":
+	default:
+		web.Error(w, http.StatusBadRequest, "validation", "mode must be inherit, off or detect")
+		return
+	}
+	if in.Paranoia != nil && (*in.Paranoia < 1 || *in.Paranoia > 4) {
+		web.Error(w, http.StatusBadRequest, "validation", "paranoia must be 1-4")
+		return
+	}
+	excluded, err := normalizeRuleIDs(in.ExcludedRules)
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	if in.Mode == "inherit" && excluded == "" && in.Paranoia == nil {
+		web.Error(w, http.StatusBadRequest, "validation", "override has no effect: set a mode, excluded rules, or paranoia")
+		return
+	}
+	o, err := s.Store.CreateWAFOverride(r.Context(), &store.WAFRouteOverride{
+		DomainID: d.ID, Path: in.Path, Mode: in.Mode, ExcludedRules: excluded, Paranoia: in.Paranoia, Enabled: true,
+	})
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not create override")
+		return
+	}
+	_, _, _ = s.Render.Rebuild(r.Context())
+	web.JSON(w, http.StatusCreated, map[string]any{"override": toOverrideDTO(*o)})
+}
+
+func (s *Service) DeleteOverride(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.ownDomain(w, r)
+	if !ok {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "overrideID"))
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_id", "invalid override id")
+		return
+	}
+	if err := s.Store.DeleteWAFOverride(r.Context(), id, d.ID); err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not delete override")
+		return
+	}
+	_, _, _ = s.Render.Rebuild(r.Context())
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }

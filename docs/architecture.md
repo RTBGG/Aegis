@@ -60,6 +60,31 @@ source of truth for key material (the control plane never stores private keys).
   complete the chain of trust; SHA-256 (type 2) is recommended.
 - **Edge impact**: none — DNSSEC lives entirely in the DNS plane.
 
+## Per-route WAF tuning + custom SecRules (Phase 2)
+
+The Coraza directives a domain runs are assembled by `config.corazaDirectives`:
+
+```
+coraza.conf → crs-setup.conf → default paranoia (SecAction 900110)
+  → per-route override SecRules (phase 1)   ← waf_route_overrides
+  → Include CRS rules/*.conf
+  → operator custom rules                    ← security_policies.waf_custom_rules
+  → SecRuleEngine On|DetectionOnly
+```
+
+- **Per-route overrides** (`waf_route_overrides`): each row renders a phase-1
+  `SecRule REQUEST_URI "@beginsWith <path>"` whose `ctl:` actions disable the
+  engine (`ruleEngine=Off`), force detection (`DetectionOnly`), drop CRS rules
+  (`ruleRemoveById`), or change paranoia for that path. They run before CRS so
+  the exclusions/paranoia apply. Generated rule IDs start at 9_010_000 (above
+  the CRS range).
+- **Custom SecRules import** (`security_policies.waf_custom_rules`): operator
+  SecLang appended after CRS. Validated server-side (`internal/security`) against
+  a **directive allowlist** (SecRule/SecAction/SecMarker/SecRule{Remove,Update}*)
+  with backtick and balanced-quote checks, so a tenant cannot inject I/O,
+  remote-rule, or engine-global directives, or (accidentally) a syntax error that
+  would stall config rendering for everyone.
+
 ## Request pipeline (edge)
 
 `nftables (L3/4)` → `ja4` (JA4H fingerprint → `{http.vars.ja4h}`) →
@@ -113,8 +138,8 @@ global blocklist, separate from the operator-managed `blocklists` table.
 
 ## Phases 2–3 (remaining)
 
-- P2: ClickHouse analytics, richer bot scoring + CAPTCHA, per-route WAF tuning +
-  custom SecRules import, billing. (Threat-feed ingestion → auto-blocklists,
-  DNSSEC, audited admin impersonation, and real SMTP email are **built**.)
+- P2: ClickHouse analytics, richer bot scoring + CAPTCHA, billing. (Threat-feed
+  ingestion → auto-blocklists, DNSSEC, audited admin impersonation, real SMTP
+  email, and per-route WAF tuning + custom SecRules import are **built**.)
 - P3: multi-node edge enrollment over the served `install/edge.sh`, per-node
   mTLS PKI, GeoDNS/weighted edge distribution, HA control plane, anycast option.

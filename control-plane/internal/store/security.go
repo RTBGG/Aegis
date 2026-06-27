@@ -28,7 +28,7 @@ func (s *Store) UpdatePolicy(ctx context.Context, p *SecurityPolicy) (*SecurityP
 	rows, err := s.Pool.Query(ctx, `
 		UPDATE security_policies SET
 			https_redirect=$2, min_tls=$3,
-			waf_enabled=$4, waf_paranoia=$5, waf_mode=$6,
+			waf_enabled=$4, waf_paranoia=$5, waf_mode=$6, waf_custom_rules=$14,
 			rate_limit_enabled=$7, rate_limit_rpm=$8, rate_limit_burst=$9,
 			cache_enabled=$10, cache_ttl=$11,
 			bot_protection=$12, challenge_enabled=$13,
@@ -38,7 +38,7 @@ func (s *Store) UpdatePolicy(ctx context.Context, p *SecurityPolicy) (*SecurityP
 		p.WAFEnabled, p.WAFParanoia, p.WAFMode,
 		p.RateLimitEnabled, p.RateLimitRPM, p.RateLimitBurst,
 		p.CacheEnabled, p.CacheTTL,
-		p.BotProtection, p.ChallengeEnabled)
+		p.BotProtection, p.ChallengeEnabled, p.WAFCustomRules)
 	if err != nil {
 		return nil, err
 	}

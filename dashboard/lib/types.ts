@@ -35,12 +35,22 @@ export interface DnssecInfo {
   dnskey: string[] | null;
 }
 
+export interface WafOverride {
+  id: string;
+  path: string;
+  mode: "inherit" | "off" | "detect";
+  excluded_rules: string;
+  paranoia: number | null;
+  enabled: boolean;
+}
+
 export interface SecurityPolicy {
   https_redirect: boolean;
   min_tls: string;
   waf_enabled: boolean;
   waf_paranoia: number;
   waf_mode: "block" | "detect";
+  waf_custom_rules: string;
   rate_limit_enabled: boolean;
   rate_limit_rpm: number;
   rate_limit_burst: number;

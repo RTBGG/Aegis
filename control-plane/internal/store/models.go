@@ -58,6 +58,7 @@ type SecurityPolicy struct {
 	WAFEnabled       bool      `db:"waf_enabled"`
 	WAFParanoia      int32     `db:"waf_paranoia"`
 	WAFMode          string    `db:"waf_mode"`
+	WAFCustomRules   string    `db:"waf_custom_rules"`
 	RateLimitEnabled bool      `db:"rate_limit_enabled"`
 	RateLimitRPM     int32     `db:"rate_limit_rpm"`
 	RateLimitBurst   int32     `db:"rate_limit_burst"`
@@ -66,6 +67,17 @@ type SecurityPolicy struct {
 	BotProtection    string    `db:"bot_protection"`
 	ChallengeEnabled bool      `db:"challenge_enabled"`
 	UpdatedAt        time.Time `db:"updated_at"`
+}
+
+type WAFRouteOverride struct {
+	ID            uuid.UUID `db:"id" json:"id"`
+	DomainID      uuid.UUID `db:"domain_id" json:"domain_id"`
+	Path          string    `db:"path" json:"path"`
+	Mode          string    `db:"mode" json:"mode"`
+	ExcludedRules string    `db:"excluded_rules" json:"excluded_rules"`
+	Paranoia      *int32    `db:"paranoia" json:"paranoia"`
+	Enabled       bool      `db:"enabled" json:"enabled"`
+	CreatedAt     time.Time `db:"created_at" json:"created_at"`
 }
 
 type Edge struct {
