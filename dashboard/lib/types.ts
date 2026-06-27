@@ -29,6 +29,12 @@ export interface DnsRecord {
   updated_at: string;
 }
 
+export interface DnssecInfo {
+  enabled: boolean;
+  ds: string[] | null;
+  dnskey: string[] | null;
+}
+
 export interface SecurityPolicy {
   https_redirect: boolean;
   min_tls: string;
