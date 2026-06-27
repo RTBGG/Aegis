@@ -11,6 +11,7 @@ controls. This document records trust boundaries and the security posture.
 | Browser → control plane | Argon2id passwords, TOTP MFA, Redis sessions (httpOnly+Secure+SameSite=Lax cookies), double-submit CSRF, RBAC |
 | Agent → control plane | Bearer agent token over the internal network (Phase 1). **Phase 3: single-use enrollment token exchanged for per-node mTLS** |
 | Control plane → PowerDNS | API key over the internal network |
+| Control plane → threat-feed providers | Outbound HTTPS only; responses are untrusted input — see "Threat-feed ingestion" |
 | Tenant isolation | Every domain/record/policy query is scoped by `account_id`; ownership re-checked on each request |
 
 ## Authentication & sessions
@@ -32,6 +33,26 @@ The served `install/edge.sh` provisions a new host, so it is hardened:
 - Bootstrap pulls signed artifacts; post-enrollment traffic uses **mTLS** (P3).
 - The edge `systemd` unit runs least-privilege (`NoNewPrivileges`,
   `ProtectSystem=full`, only `CAP_NET_BIND_SERVICE`).
+
+## Threat-feed ingestion (Phase 2)
+
+The control plane fetches third-party IP-reputation feeds. Their bodies are
+**untrusted input** and a feed could be unreachable, truncated, or malicious:
+
+- **Bounded I/O**: each fetch has a 30s timeout and the body is read through a
+  32 MiB `io.LimitReader`; at most 300k CIDRs are kept per feed.
+- **Strict parsing**: only tokens that pass `netip` CIDR/address validation are
+  stored, normalised to canonical masked form. Malformed lines are skipped and
+  counted, never trusted as-is — so a feed cannot inject arbitrary Caddyfile
+  text (entries only ever appear as `remote_ip` matcher arguments).
+- **Fail-safe**: a failed sync is recorded on the feed (`last_error`) and leaves
+  the previous good entry set in place; it never wipes protection on a transient
+  error or empty response.
+- **Egress control**: the background fetcher is gated by `THREATFEED_SYNC`; set
+  it `off` for air-gapped deployments. Feed management is admin-only (RBAC).
+- **Availability note**: feeds default to a global hard `403`. An over-broad
+  upstream feed could block legitimate traffic — feeds are individually toggle-
+  able and entry counts are surfaced so operators can audit blast radius.
 
 ## Known Phase 1 limitations (hardening backlog)
 

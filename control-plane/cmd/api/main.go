@@ -23,6 +23,7 @@ import (
 	"github.com/aegis/control-plane/internal/mailer"
 	"github.com/aegis/control-plane/internal/security"
 	"github.com/aegis/control-plane/internal/store"
+	"github.com/aegis/control-plane/internal/threatfeed"
 )
 
 func main() {
@@ -53,6 +54,7 @@ func main() {
 	ml := mailer.New(cfg.Mailer, cfg.SMTPAddr, "no-reply@"+cfg.Brand)
 	pdns := dns.NewClient(cfg.PDNSAPIURL, cfg.PDNSAPIKey)
 	renderer := config.New(st, cfg)
+	feeds := threatfeed.New(st, renderer)
 
 	if err := bootstrap(ctx, st, cfg); err != nil {
 		slog.Error("bootstrap", "err", err)
@@ -70,13 +72,18 @@ func main() {
 		Domains:   domains.New(st, pdns, cfg, renderer),
 		Security:  security.New(st, renderer),
 		Analytics: analytics.New(st),
-		Admin:     admin.New(st, cfg, renderer),
+		Admin:     admin.New(st, cfg, renderer, feeds),
 		Edge:      edgeapi.New(st, cfg),
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           httpapi.NewRouter(deps),
 		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	if cfg.ThreatFeedSync {
+		go feeds.Run(ctx)
+		slog.Info("threat-feed sync enabled")
 	}
 
 	go func() {

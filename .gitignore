@@ -15,6 +15,7 @@ node_modules/
 dist/
 .turbo/
 npm-debug.log*
+*.tsbuildinfo
 
 # Caddy / data
 edge/build/caddy

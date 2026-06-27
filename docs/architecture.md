@@ -72,9 +72,32 @@ and HTTP→HTTPS are Caddy defaults.
   TLS-ClientHello JA4 needs a listener wrapper and lands in Phase 2.
 - **Data access** uses hand-written `pgx` queries instead of `sqlc` codegen.
 
-## Phases 2–3 (designed, not built)
+## Threat-feed ingestion (Phase 2)
 
-- P2: ClickHouse analytics, richer bot scoring + CAPTCHA, threat-feed ingestion
-  (Spamhaus DROP, FireHOL), DNSSEC, per-route WAF tuning, billing.
+Free IP-reputation feeds are pulled on a schedule and enforced at the edge as a
+global blocklist, separate from the operator-managed `blocklists` table.
+
+- **Source of truth**: `threat_feeds` (one row per provider; seeded with Spamhaus
+  DROP + FireHOL Level 1) and `threat_feed_entries` (one row per CIDR per feed).
+- **Fetcher** (`internal/threatfeed`): a background `Syncer` started from
+  `cmd/api` (gated by `THREATFEED_SYNC`). Every minute it picks feeds whose last
+  successful sync is older than their `refresh_interval`, downloads them
+  (size-capped, timeout-bounded), parses CIDRs (tolerant of both `.netset` and
+  Spamhaus DROP formats), validates/de-dupes/sorts them, and swaps each feed's
+  entries atomically. A failed fetch is recorded on the feed row and leaves the
+  last-known-good entries in place.
+- **Enforcement**: `config.Renderer` emits the union of all *enabled* feeds'
+  CIDRs **once** as a reusable Caddyfile snippet (`(aegis_threatfeeds)`) and
+  `import`s it into every proxied site — so thousands of networks are not
+  duplicated per host. Listed clients get a hard `403`.
+- **Control**: Admin → Threat feeds lists each feed's status/entry-count/last
+  sync, toggles it on/off, and triggers an immediate refresh. Toggling or
+  refreshing re-renders config and pokes the edges.
+
+## Phases 2–3 (remaining)
+
+- P2: ClickHouse analytics, richer bot scoring + CAPTCHA, DNSSEC, per-route WAF
+  tuning + custom SecRules import, audited impersonation, billing, real SMTP.
+  (Threat-feed ingestion → auto-blocklists is **built**, see above.)
 - P3: multi-node edge enrollment over the served `install/edge.sh`, per-node
   mTLS PKI, GeoDNS/weighted edge distribution, HA control plane, anycast option.
