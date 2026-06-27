@@ -101,6 +101,23 @@ type Blocklist struct {
 	CreatedAt time.Time  `db:"created_at"`
 }
 
+type ThreatFeed struct {
+	ID              uuid.UUID  `db:"id"`
+	Slug            string     `db:"slug"`
+	Name            string     `db:"name"`
+	URL             string     `db:"url"`
+	Format          string     `db:"format"`
+	Action          string     `db:"action"`
+	Enabled         bool       `db:"enabled"`
+	RefreshInterval int32      `db:"refresh_interval"`
+	LastSyncedAt    *time.Time `db:"last_synced_at"`
+	LastStatus      *string    `db:"last_status"`
+	LastError       *string    `db:"last_error"`
+	EntryCount      int32      `db:"entry_count"`
+	CreatedAt       time.Time  `db:"created_at"`
+	UpdatedAt       time.Time  `db:"updated_at"`
+}
+
 type ConfigBundle struct {
 	Version   int64     `db:"version"`
 	Caddyfile string    `db:"caddyfile"`

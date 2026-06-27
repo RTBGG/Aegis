@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/aegis/control-plane/internal/auth"
 	"github.com/aegis/control-plane/internal/config"
 	"github.com/aegis/control-plane/internal/store"
+	"github.com/aegis/control-plane/internal/threatfeed"
 	"github.com/aegis/control-plane/internal/web"
 )
 
@@ -26,10 +28,11 @@ type Service struct {
 	Store  *store.Store
 	Cfg    *appcfg.Config
 	Render *config.Renderer
+	Feeds  *threatfeed.Syncer
 }
 
-func New(st *store.Store, cfg *appcfg.Config, r *config.Renderer) *Service {
-	return &Service{Store: st, Cfg: cfg, Render: r}
+func New(st *store.Store, cfg *appcfg.Config, r *config.Renderer, feeds *threatfeed.Syncer) *Service {
+	return &Service{Store: st, Cfg: cfg, Render: r, Feeds: feeds}
 }
 
 // --- users ---
@@ -161,6 +164,93 @@ func (s *Service) DeleteBlocklist(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, _ = s.Render.Rebuild(r.Context())
 	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// --- threat feeds (Phase 2 auto-blocklists) ---
+
+type feedDTO struct {
+	ID              uuid.UUID  `json:"id"`
+	Slug            string     `json:"slug"`
+	Name            string     `json:"name"`
+	URL             string     `json:"url"`
+	Format          string     `json:"format"`
+	Enabled         bool       `json:"enabled"`
+	RefreshInterval int32      `json:"refresh_interval"`
+	LastSyncedAt    *time.Time `json:"last_synced_at"`
+	LastStatus      *string    `json:"last_status"`
+	LastError       *string    `json:"last_error"`
+	EntryCount      int32      `json:"entry_count"`
+}
+
+func toFeedDTO(f store.ThreatFeed) feedDTO {
+	return feedDTO{
+		ID: f.ID, Slug: f.Slug, Name: f.Name, URL: f.URL, Format: f.Format,
+		Enabled: f.Enabled, RefreshInterval: f.RefreshInterval,
+		LastSyncedAt: f.LastSyncedAt, LastStatus: f.LastStatus, LastError: f.LastError,
+		EntryCount: f.EntryCount,
+	}
+}
+
+func (s *Service) ListThreatFeeds(w http.ResponseWriter, r *http.Request) {
+	feeds, err := s.Store.ListThreatFeeds(r.Context())
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not list threat feeds")
+		return
+	}
+	out := make([]feedDTO, len(feeds))
+	for i, f := range feeds {
+		out[i] = toFeedDTO(f)
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"feeds": out})
+}
+
+func (s *Service) UpdateThreatFeed(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := web.Decode(w, r, &in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := s.Store.SetThreatFeedEnabled(r.Context(), id, in.Enabled); err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not update feed")
+		return
+	}
+	actor := auth.MustUser(r.Context())
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, "admin.threat_feed", id.String(), "", map[string]any{"enabled": in.Enabled})
+	// Toggling a feed changes the effective edge blocklist.
+	_, _, _ = s.Render.Rebuild(r.Context())
+	f, err := s.Store.GetThreatFeed(r.Context(), id)
+	if err != nil {
+		web.Error(w, http.StatusNotFound, "not_found", "feed not found")
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"feed": toFeedDTO(*f)})
+}
+
+func (s *Service) RefreshThreatFeed(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_id", "invalid id")
+		return
+	}
+	f, err := s.Feeds.RefreshNow(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		web.Error(w, http.StatusNotFound, "not_found", "feed not found")
+		return
+	}
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not refresh feed")
+		return
+	}
+	actor := auth.MustUser(r.Context())
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, "admin.threat_feed_refresh", id.String(), "", nil)
+	web.JSON(w, http.StatusOK, map[string]any{"feed": toFeedDTO(*f)})
 }
 
 // --- edge enrollment tokens (Phase 3 provisioning; mint/list available now) ---

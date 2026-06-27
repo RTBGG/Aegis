@@ -87,3 +87,17 @@ export interface Blocklist {
   note: string | null;
   created_at: string;
 }
+
+export interface ThreatFeed {
+  id: string;
+  slug: string;
+  name: string;
+  url: string;
+  format: string;
+  enabled: boolean;
+  refresh_interval: number;
+  last_synced_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  entry_count: number;
+}

@@ -36,6 +36,11 @@ type Config struct {
 	EdgeTLSMode     string // "internal" | "acme"
 	ACMEEmail       string
 	ChallengeSecret string
+
+	// ThreatFeedSync enables the background fetcher that pulls IP-reputation
+	// feeds (Spamhaus DROP, FireHOL). Set THREATFEED_SYNC=off in air-gapped
+	// deployments; manual refresh from the admin UI still works either way.
+	ThreatFeedSync bool
 }
 
 // Load reads configuration from the environment, applying defaults and
@@ -60,6 +65,7 @@ func Load() (*Config, error) {
 		EdgeTLSMode:            env("EDGE_TLS_MODE", "internal"),
 		ACMEEmail:              env("ACME_EMAIL", "admin@example.com"),
 		ChallengeSecret:        os.Getenv("CHALLENGE_SECRET"),
+		ThreatFeedSync:         envBool("THREATFEED_SYNC", true),
 	}
 	c.SessionSecret = []byte(os.Getenv("SESSION_SECRET"))
 	c.CSRFSecret = []byte(os.Getenv("CSRF_SECRET"))
@@ -94,4 +100,19 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envBool reads a boolean-ish env var. "0", "false", "no", "off" (any case) are
+// false; anything else non-empty is true; unset falls back to def.
+func envBool(key string, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
 }

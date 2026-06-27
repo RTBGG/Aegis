@@ -22,7 +22,7 @@ lightweight node-agent. Deploys all-in-one on Debian 13 with Docker Compose.
 |-------|-----------|
 | **Control plane** | Go API (`control-plane/`) + Next.js dashboard (`dashboard/`), PostgreSQL (truth), Redis |
 | **DNS plane** | PowerDNS Authoritative (driven via its HTTP API) |
-| **Data plane (edge)** | Caddy + Coraza/CRS + Souin cache + rate-limit + custom `ja4`/`botscore`/`challenge` modules (`edge/`), plus a `node-agent` (`node-agent/`) |
+| **Data plane (edge)** | Caddy + Coraza/CRS + Souin cache + rate-limit + threat-feed IP blocklist + custom `ja4`/`botscore`/`challenge` modules (`edge/`), plus a `node-agent` (`node-agent/`) |
 
 The control plane is the source of truth. It renders a **Caddyfile bundle**
 per edge; the `node-agent` pulls it (long-poll over HTTP, push-triggered via
