@@ -69,14 +69,14 @@ type SecurityPolicy struct {
 }
 
 type Edge struct {
-	ID           uuid.UUID  `db:"id"`
-	Name         string     `db:"name"`
-	PublicIP     string     `db:"public_ip"`
-	Region       string     `db:"region"`
-	Status       string     `db:"status"`
-	AgentVersion *string    `db:"agent_version"`
-	LastSeenAt   *time.Time `db:"last_seen_at"`
-	CreatedAt    time.Time  `db:"created_at"`
+	ID           uuid.UUID  `db:"id" json:"id"`
+	Name         string     `db:"name" json:"name"`
+	PublicIP     string     `db:"public_ip" json:"public_ip"`
+	Region       string     `db:"region" json:"region"`
+	Status       string     `db:"status" json:"status"`
+	AgentVersion *string    `db:"agent_version" json:"agent_version"`
+	LastSeenAt   *time.Time `db:"last_seen_at" json:"last_seen_at"`
+	CreatedAt    time.Time  `db:"created_at" json:"created_at"`
 }
 
 type EnrollmentToken struct {
@@ -91,14 +91,14 @@ type EnrollmentToken struct {
 }
 
 type Blocklist struct {
-	ID        uuid.UUID  `db:"id"`
-	Scope     string     `db:"scope"`
-	DomainID  *uuid.UUID `db:"domain_id"`
-	Kind      string     `db:"kind"`
-	Value     string     `db:"value"`
-	Action    string     `db:"action"`
-	Note      *string    `db:"note"`
-	CreatedAt time.Time  `db:"created_at"`
+	ID        uuid.UUID  `db:"id" json:"id"`
+	Scope     string     `db:"scope" json:"scope"`
+	DomainID  *uuid.UUID `db:"domain_id" json:"domain_id"`
+	Kind      string     `db:"kind" json:"kind"`
+	Value     string     `db:"value" json:"value"`
+	Action    string     `db:"action" json:"action"`
+	Note      *string    `db:"note" json:"note"`
+	CreatedAt time.Time  `db:"created_at" json:"created_at"`
 }
 
 type ThreatFeed struct {
