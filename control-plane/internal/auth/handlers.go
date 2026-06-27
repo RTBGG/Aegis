@@ -162,10 +162,18 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// Me returns the currently authenticated user.
+// Me returns the currently authenticated user, plus the impersonating admin
+// when the session is in an impersonation.
 func (a *Auth) Me(w http.ResponseWriter, r *http.Request) {
 	u := MustUser(r.Context())
-	web.JSON(w, http.StatusOK, map[string]any{"user": toUserDTO(u)})
+	resp := map[string]any{"user": toUserDTO(u)}
+	if sess, ok := SessionFrom(r.Context()); ok && sess.ImpersonatorID != nil {
+		resp["impersonator"] = map[string]any{
+			"id":    sess.ImpersonatorID.String(),
+			"email": sess.ImpersonatorEmail,
+		}
+	}
+	web.JSON(w, http.StatusOK, resp)
 }
 
 // VerifyEmail consumes an email verification token.

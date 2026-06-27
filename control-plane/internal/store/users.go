@@ -116,18 +116,19 @@ func (s *Store) ConsumeEmailToken(ctx context.Context, tokenHash, purpose string
 // --- admin listing ---
 
 // AdminUserRow is the admin view of a user joined with account + domain count.
+// json tags must stay snake_case to match the dashboard's AdminUser type.
 type AdminUserRow struct {
-	ID            uuid.UUID  `db:"id"`
-	Email         string     `db:"email"`
-	Role          string     `db:"role"`
-	Status        string     `db:"status"`
-	EmailVerified bool       `db:"email_verified"`
-	TOTPEnabled   bool       `db:"totp_enabled"`
-	CreatedAt     time.Time  `db:"created_at"`
-	LastLoginAt   *time.Time `db:"last_login_at"`
-	AccountID     uuid.UUID  `db:"account_id"`
-	AccountName   string     `db:"account_name"`
-	DomainCount   int64      `db:"domain_count"`
+	ID            uuid.UUID  `db:"id" json:"id"`
+	Email         string     `db:"email" json:"email"`
+	Role          string     `db:"role" json:"role"`
+	Status        string     `db:"status" json:"status"`
+	EmailVerified bool       `db:"email_verified" json:"email_verified"`
+	TOTPEnabled   bool       `db:"totp_enabled" json:"totp_enabled"`
+	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
+	LastLoginAt   *time.Time `db:"last_login_at" json:"last_login_at"`
+	AccountID     uuid.UUID  `db:"account_id" json:"account_id"`
+	AccountName   string     `db:"account_name" json:"account_name"`
+	DomainCount   int64      `db:"domain_count" json:"domain_count"`
 }
 
 func (s *Store) ListUsersWithStats(ctx context.Context) ([]AdminUserRow, error) {

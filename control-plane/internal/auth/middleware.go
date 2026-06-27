@@ -14,6 +14,7 @@ type ctxKey int
 const (
 	userKey ctxKey = iota
 	sessionIDKey
+	sessionDataKey
 )
 
 // UserFrom returns the authenticated user from the request context.
@@ -26,6 +27,12 @@ func UserFrom(ctx context.Context) (*store.User, bool) {
 func MustUser(ctx context.Context) *store.User {
 	u, _ := UserFrom(ctx)
 	return u
+}
+
+// SessionFrom returns the current session record (incl. impersonation state).
+func SessionFrom(ctx context.Context) (*Session, bool) {
+	s, ok := ctx.Value(sessionDataKey).(*Session)
+	return s, ok
 }
 
 func sessionIDFrom(ctx context.Context) string {
@@ -56,6 +63,7 @@ func (a *Auth) RequireAuth(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), userKey, u)
 		ctx = context.WithValue(ctx, sessionIDKey, id)
+		ctx = context.WithValue(ctx, sessionDataKey, sess)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

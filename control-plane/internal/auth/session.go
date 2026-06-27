@@ -22,6 +22,11 @@ type Session struct {
 	UserID      uuid.UUID `json:"uid"`
 	CreatedAt   time.Time `json:"ct"`
 	MFARequired bool      `json:"mfa"` // true while TOTP step is still pending
+
+	// Impersonation: when an admin assumes another user's identity, UserID is the
+	// target and these record the real admin so the session can be restored.
+	ImpersonatorID    *uuid.UUID `json:"imp,omitempty"`
+	ImpersonatorEmail string     `json:"impe,omitempty"`
 }
 
 func sessKey(id string) string { return "sess:" + id }
