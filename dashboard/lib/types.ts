@@ -60,6 +60,20 @@ export interface MetricsSummary {
   bytes: number;
 }
 
+export interface Impersonator {
+  id: string;
+  email: string;
+}
+
+export interface ImpersonationAuditEntry {
+  id: number;
+  action: string;
+  actor_email: string | null;
+  target: string | null;
+  ip: string | null;
+  created_at: string;
+}
+
 export interface AdminUser {
   id: string;
   email: string;

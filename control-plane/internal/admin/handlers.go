@@ -76,6 +76,29 @@ func (s *Service) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// --- impersonation audit ---
+
+func (s *Service) ImpersonationLog(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.Store.ListImpersonationAudit(r.Context(), 50)
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not load audit log")
+		return
+	}
+	type entryView struct {
+		ID         int64     `json:"id"`
+		Action     string    `json:"action"`
+		ActorEmail *string   `json:"actor_email"`
+		Target     *string   `json:"target"`
+		IP         *string   `json:"ip"`
+		CreatedAt  time.Time `json:"created_at"`
+	}
+	out := make([]entryView, len(rows))
+	for i, e := range rows {
+		out[i] = entryView{ID: e.ID, Action: e.Action, ActorEmail: e.ActorEmail, Target: e.Target, IP: e.IP, CreatedAt: e.CreatedAt}
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"entries": out})
+}
+
 // --- edge fleet ---
 
 func (s *Service) Edges(w http.ResponseWriter, r *http.Request) {

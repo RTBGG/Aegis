@@ -66,6 +66,23 @@ The control plane fetches third-party IP-reputation feeds. Their bodies are
   DS record is still published at the registrar breaks resolution. The dashboard
   warns the operator to remove the DS record first.
 
+## Admin impersonation (Phase 2)
+
+Admins can assume a user's identity for support, with guardrails:
+
+- **No privilege escalation**: only role `user` accounts may be impersonated, so
+  an impersonator can never gain rights it didn't already hold. Self- and
+  nested-impersonation are rejected.
+- **Reduced privilege while impersonating**: the session's effective user becomes
+  the target (role `user`), so admin routes are unreachable until the admin
+  returns — impersonation cannot be used to perform admin actions as a tenant.
+- **Reversible, same session**: the real admin id is stored on the server-side
+  session (never trusted from the client) and restored on "Return to admin"; no
+  new credentials are issued.
+- **Audited & visible**: every start/stop writes an `admin.impersonate_*` audit
+  row (actor, target, IP), surfaced in Admin → Audit log. A persistent banner
+  shows the operator they are impersonating.
+
 ## Known Phase 1 limitations (hardening backlog)
 
 - Agent auth is a shared bearer token, not per-node mTLS (P3).

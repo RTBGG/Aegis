@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { User } from "@/lib/types";
+import type { User, Impersonator } from "@/lib/types";
 import { UserContext } from "@/lib/user";
 import { Badge } from "@/components/ui";
 
@@ -11,17 +11,28 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
+  const [impersonator, setImpersonator] = useState<Impersonator | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api
-      .get<{ user: User }>("/auth/me")
+      .get<{ user: User; impersonator?: Impersonator }>("/auth/me")
       .then((r) => {
         setUser(r.user);
+        setImpersonator(r.impersonator ?? null);
         setLoading(false);
       })
       .catch(() => router.push("/login"));
   }, [router]);
+
+  async function stopImpersonation() {
+    try {
+      await api.post("/auth/impersonate/stop");
+    } finally {
+      // Full reload so every session-derived view reflects the restored admin.
+      window.location.assign("/admin");
+    }
+  }
 
   if (loading) return <div className="grid min-h-screen place-items-center text-slate-400">Loading…</div>;
   if (!user) return null;
@@ -43,7 +54,21 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <UserContext.Provider value={user}>
-      <div className="flex min-h-screen">
+      <div className="flex min-h-screen flex-col">
+        {impersonator && (
+          <div className="flex items-center justify-between gap-3 bg-amber-500/90 px-4 py-2 text-sm text-black">
+            <span>
+              Viewing as <strong>{user.email}</strong> — impersonation started by {impersonator.email}
+            </span>
+            <button
+              onClick={stopImpersonation}
+              className="rounded bg-black/80 px-3 py-1 text-xs font-medium text-white hover:bg-black"
+            >
+              Return to admin
+            </button>
+          </div>
+        )}
+        <div className="flex min-h-0 flex-1">
         <aside className="flex w-60 shrink-0 flex-col border-r border-edge bg-panel/40 p-4">
           <div className="mb-6 px-2">
             <div className="text-lg font-semibold">Aegis</div>
@@ -78,6 +103,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <main className="flex-1 overflow-x-hidden p-8">
           <div className="mx-auto max-w-5xl">{children}</div>
         </main>
+        </div>
       </div>
     </UserContext.Provider>
   );

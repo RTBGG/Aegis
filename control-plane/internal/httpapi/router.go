@@ -75,6 +75,7 @@ func NewRouter(d Deps) http.Handler {
 
 			r.Get("/auth/me", d.Auth.Me)
 			r.Post("/auth/logout", d.Auth.Logout)
+			r.Post("/auth/impersonate/stop", d.Auth.ImpersonateStop)
 			r.Post("/auth/mfa/setup", d.Auth.MFASetup)
 			r.Post("/auth/mfa/enable", d.Auth.MFAEnable)
 			r.Post("/auth/mfa/disable", d.Auth.MFADisable)
@@ -102,6 +103,8 @@ func NewRouter(d Deps) http.Handler {
 				r.Use(auth.RequireRole("admin", "superadmin"))
 				r.Get("/admin/users", d.Admin.Users)
 				r.Post("/admin/users/{userID}/status", d.Admin.SetUserStatus)
+				r.Post("/admin/users/{userID}/impersonate", d.Auth.ImpersonateStart)
+				r.Get("/admin/impersonation-log", d.Admin.ImpersonationLog)
 				r.Get("/admin/edges", d.Admin.Edges)
 				r.Get("/admin/analytics", d.Admin.Analytics)
 				r.Get("/admin/blocklists", d.Admin.ListBlocklists)

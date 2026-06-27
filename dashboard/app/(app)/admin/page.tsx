@@ -1,16 +1,17 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import type { AdminUser, Edge, Blocklist, ThreatFeed } from "@/lib/types";
+import type { AdminUser, Edge, Blocklist, ThreatFeed, ImpersonationAuditEntry } from "@/lib/types";
 import { Button, Input, Select, Field, Card, Badge, Toggle, ErrorText } from "@/components/ui";
 
-type Tab = "users" | "edges" | "blocklists" | "feeds" | "enrollment";
+type Tab = "users" | "edges" | "blocklists" | "feeds" | "audit" | "enrollment";
 
 const TAB_LABELS: Record<Tab, string> = {
   users: "Users",
   edges: "Edges",
   blocklists: "Blocklists",
   feeds: "Threat feeds",
+  audit: "Audit log",
   enrollment: "Enrollment",
 };
 
@@ -20,7 +21,7 @@ export default function AdminPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Admin</h1>
       <div className="flex gap-1 border-b border-edge">
-        {(["users", "edges", "blocklists", "feeds", "enrollment"] as Tab[]).map((t) => (
+        {(["users", "edges", "blocklists", "feeds", "audit", "enrollment"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -34,6 +35,7 @@ export default function AdminPage() {
       {tab === "edges" && <Edges />}
       {tab === "blocklists" && <Blocklists />}
       {tab === "feeds" && <ThreatFeeds />}
+      {tab === "audit" && <AuditLog />}
       {tab === "enrollment" && <Enrollment />}
     </div>
   );
@@ -48,6 +50,12 @@ function Users() {
   async function setStatus(u: AdminUser, status: string) {
     await api.post(`/admin/users/${u.id}/status`, { status });
     load();
+  }
+  async function impersonate(u: AdminUser) {
+    if (!confirm(`Impersonate ${u.email}? Your session will act as this user (audited) until you choose "Return to admin".`)) return;
+    await api.post(`/admin/users/${u.id}/impersonate`);
+    // Full reload so the layout re-fetches /auth/me as the impersonated user.
+    window.location.assign("/dashboard");
   }
   return (
     <Card title={`All users (${users.length})`}>
@@ -77,15 +85,22 @@ function Users() {
               </td>
               <td className="text-slate-400">{u.last_login_at ? new Date(u.last_login_at).toLocaleDateString() : "never"}</td>
               <td className="text-right">
-                {u.status === "active" ? (
-                  <button onClick={() => setStatus(u, "suspended")} className="text-red-400 hover:underline">
-                    suspend
-                  </button>
-                ) : (
-                  <button onClick={() => setStatus(u, "active")} className="text-emerald-400 hover:underline">
-                    activate
-                  </button>
-                )}
+                <div className="flex justify-end gap-3">
+                  {u.role === "user" && u.status === "active" && (
+                    <button onClick={() => impersonate(u)} className="text-accent hover:underline">
+                      impersonate
+                    </button>
+                  )}
+                  {u.status === "active" ? (
+                    <button onClick={() => setStatus(u, "suspended")} className="text-red-400 hover:underline">
+                      suspend
+                    </button>
+                  ) : (
+                    <button onClick={() => setStatus(u, "active")} className="text-emerald-400 hover:underline">
+                      activate
+                    </button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
@@ -306,6 +321,51 @@ function ThreatFeeds() {
         )}
       </Card>
     </div>
+  );
+}
+
+function AuditLog() {
+  const [entries, setEntries] = useState<ImpersonationAuditEntry[]>([]);
+  useEffect(() => {
+    api
+      .get<{ entries: ImpersonationAuditEntry[] }>("/admin/impersonation-log")
+      .then((r) => setEntries(r.entries ?? []))
+      .catch(() => {});
+  }, []);
+  return (
+    <Card title="Impersonation audit log">
+      <p className="mb-3 text-sm text-slate-400">Every admin impersonation start and stop is recorded here.</p>
+      {entries.length === 0 ? (
+        <p className="text-sm text-slate-400">No impersonation events yet.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs uppercase text-slate-500">
+            <tr>
+              <th className="py-2">When</th>
+              <th>Event</th>
+              <th>Admin</th>
+              <th>Target user</th>
+              <th>IP</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-edge">
+            {entries.map((e) => (
+              <tr key={e.id}>
+                <td className="py-2 text-slate-400">{new Date(e.created_at).toLocaleString()}</td>
+                <td>
+                  <Badge tone={e.action.endsWith("start") ? "amber" : "slate"}>
+                    {e.action.endsWith("start") ? "start" : "stop"}
+                  </Badge>
+                </td>
+                <td>{e.actor_email ?? "—"}</td>
+                <td className="font-mono text-slate-300">{e.target ?? "—"}</td>
+                <td className="font-mono text-slate-500">{e.ip ?? "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
   );
 }
 
