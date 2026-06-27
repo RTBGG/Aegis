@@ -54,6 +54,18 @@ The control plane fetches third-party IP-reputation feeds. Their bodies are
   upstream feed could block legitimate traffic — feeds are individually toggle-
   able and entry counts are surfaced so operators can audit blast radius.
 
+## DNSSEC (Phase 2)
+
+- **Key custody**: PowerDNS generates and stores all DNSSEC private keys; the
+  control plane only ever reads public DS/DNSKEY records. The private key
+  PowerDNS returns when a key is created is deliberately not modelled by the API
+  client, so it cannot leak through the dashboard or logs.
+- **Authorization**: enable/disable is owner-scoped (same account check as DNS
+  records) and both actions are written to the audit log.
+- **Operational caveat**: disabling DNSSEC (or deleting a signed domain) while a
+  DS record is still published at the registrar breaks resolution. The dashboard
+  warns the operator to remove the DS record first.
+
 ## Known Phase 1 limitations (hardening backlog)
 
 - Agent auth is a shared bearer token, not per-node mTLS (P3).

@@ -2,10 +2,11 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import type { Domain, DnsRecord, SecurityPolicy, MetricsSummary } from "@/lib/types";
+import type { Domain, DnsRecord, DnssecInfo, SecurityPolicy, MetricsSummary } from "@/lib/types";
 import { Button, Input, Select, Field, Card, Badge, Toggle, ErrorText } from "@/components/ui";
 
-type Tab = "dns" | "security" | "analytics";
+type Tab = "dns" | "dnssec" | "security" | "analytics";
+const TAB_LABEL: Record<Tab, string> = { dns: "DNS", dnssec: "DNSSEC", security: "Security", analytics: "Analytics" };
 const RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT", "MX"];
 const canProxy = (t: string) => ["A", "AAAA", "CNAME"].includes(t);
 
@@ -63,18 +64,19 @@ export default function DomainDetail() {
       {msg && <p className="text-sm text-slate-300">{msg}</p>}
 
       <div className="flex gap-1 border-b border-edge">
-        {(["dns", "security", "analytics"] as Tab[]).map((t) => (
+        {(["dns", "dnssec", "security", "analytics"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm capitalize ${tab === t ? "border-b-2 border-accent text-white" : "text-slate-400"}`}
+            className={`px-4 py-2 text-sm ${tab === t ? "border-b-2 border-accent text-white" : "text-slate-400"}`}
           >
-            {t}
+            {TAB_LABEL[t]}
           </button>
         ))}
       </div>
 
       {tab === "dns" && <DnsTab domainId={id} />}
+      {tab === "dnssec" && <DnssecTab domainId={id} />}
       {tab === "security" && <SecurityTab domainId={id} />}
       {tab === "analytics" && <AnalyticsTab domainId={id} />}
     </div>
@@ -192,6 +194,89 @@ function DnsTab({ domainId }: { domainId: string }) {
             </tbody>
           </table>
         )}
+      </Card>
+    </div>
+  );
+}
+
+function DnssecTab({ domainId }: { domainId: string }) {
+  const [info, setInfo] = useState<DnssecInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  function load() {
+    api.get<{ dnssec: DnssecInfo }>(`/domains/${domainId}/dnssec`).then((r) => setInfo(r.dnssec)).catch(() => {});
+  }
+  useEffect(load, [domainId]);
+
+  async function enable() {
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await api.post<{ dnssec: DnssecInfo }>(`/domains/${domainId}/dnssec`);
+      setInfo(r.dnssec);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Failed to enable DNSSEC");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function disable() {
+    if (!confirm("Disable DNSSEC? Remove the DS record at your registrar FIRST, or resolution will break.")) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await api.del<{ dnssec: DnssecInfo }>(`/domains/${domainId}/dnssec`);
+      setInfo(r.dnssec);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Failed to disable DNSSEC");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!info) return <div className="text-slate-400">Loading…</div>;
+
+  return (
+    <div className="space-y-5">
+      <Card
+        title="DNSSEC"
+        actions={<Badge tone={info.enabled ? "green" : "slate"}>{info.enabled ? "signed" : "unsigned"}</Badge>}
+      >
+        {!info.enabled ? (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-400">
+              DNSSEC cryptographically signs this zone so resolvers can detect tampering. Enable it here, then publish the
+              generated <span className="font-mono">DS</span> record at your domain registrar to complete the chain of trust.
+            </p>
+            <Button onClick={enable} disabled={busy}>
+              {busy ? "Enabling…" : "Enable DNSSEC"}
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-400">
+              Zone is signed. Add <span className="text-slate-200">one</span> of these <span className="font-mono">DS</span>{" "}
+              records at your registrar — SHA-256 (digest type <span className="font-mono">2</span>) is recommended.
+            </p>
+            <div>
+              <div className="mb-1 text-xs uppercase text-slate-500">DS records</div>
+              <pre className="overflow-x-auto rounded-lg border border-edge bg-black/40 p-3 text-xs text-accent">
+                {(info.ds ?? []).join("\n") || "—"}
+              </pre>
+            </div>
+            <details>
+              <summary className="cursor-pointer text-xs uppercase text-slate-500">DNSKEY</summary>
+              <pre className="mt-1 overflow-x-auto rounded-lg border border-edge bg-black/40 p-3 text-xs text-slate-300">
+                {(info.dnskey ?? []).join("\n") || "—"}
+              </pre>
+            </details>
+            <Button variant="danger" onClick={disable} disabled={busy}>
+              {busy ? "Disabling…" : "Disable DNSSEC"}
+            </Button>
+          </div>
+        )}
+        <ErrorText>{err}</ErrorText>
       </Card>
     </div>
   );

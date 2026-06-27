@@ -43,6 +43,23 @@ customer traffic).
   that hostname. This is the "orange-cloud" toggle. Zone reconciliation lives in
   `control-plane/internal/domains/service.go` (`syncZone`).
 
+## DNSSEC (Phase 2)
+
+Per-zone DNSSEC is driven through PowerDNS's cryptokeys API; PowerDNS remains the
+source of truth for key material (the control plane never stores private keys).
+
+- **Backend**: `gpgsql-dnssec=yes` + `default-api-rectify=yes` in
+  `deploy/powerdns/pdns.conf` (the DNSSEC schema tables ship in
+  `pdns-gpgsql-schema.sql`).
+- **Client** (`internal/dns/dnssec.go`): `EnableDNSSEC` adds an active CSK
+  (idempotent), `DisableDNSSEC` removes all keys, `DNSSECStatus` reports the
+  signed state plus the active keys' DS/DNSKEY records.
+- **API** (`internal/domains/dnssec.go`): owner-scoped `GET/POST/DELETE
+  /domains/{id}/dnssec`; enable/disable are audited. Enabling returns the DS
+  records (digest types 1/2/4) the operator publishes at their registrar to
+  complete the chain of trust; SHA-256 (type 2) is recommended.
+- **Edge impact**: none — DNSSEC lives entirely in the DNS plane.
+
 ## Request pipeline (edge)
 
 `nftables (L3/4)` → `ja4` (JA4H fingerprint → `{http.vars.ja4h}`) →
@@ -96,8 +113,8 @@ global blocklist, separate from the operator-managed `blocklists` table.
 
 ## Phases 2–3 (remaining)
 
-- P2: ClickHouse analytics, richer bot scoring + CAPTCHA, DNSSEC, per-route WAF
-  tuning + custom SecRules import, audited impersonation, billing, real SMTP.
-  (Threat-feed ingestion → auto-blocklists is **built**, see above.)
+- P2: ClickHouse analytics, richer bot scoring + CAPTCHA, per-route WAF tuning +
+  custom SecRules import, audited impersonation, billing, real SMTP.
+  (Threat-feed ingestion → auto-blocklists and DNSSEC are **built**, see above.)
 - P3: multi-node edge enrollment over the served `install/edge.sh`, per-node
   mTLS PKI, GeoDNS/weighted edge distribution, HA control plane, anycast option.
