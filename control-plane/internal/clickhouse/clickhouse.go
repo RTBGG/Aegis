@@ -90,22 +90,39 @@ func (c *Client) QueryJSON(ctx context.Context, sql string, params map[string]st
 	return c.do(ctx, sql+"\nFORMAT JSON", params)
 }
 
-// EnsureSchema creates the analytics table if it does not exist.
+// EnsureSchema creates the analytics table if it does not exist and adds any
+// newer columns to a pre-existing table (idempotent).
 func (c *Client) EnsureSchema(ctx context.Context) error {
-	return c.Exec(ctx, `
+	if err := c.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS aegis_requests (
-			ts     DateTime,
-			host   LowCardinality(String),
-			ip     String,
-			method LowCardinality(String),
-			path   String,
-			status UInt16,
-			bytes  UInt64,
-			ua     String,
-			ja4h   String,
-			action LowCardinality(String)
+			ts      DateTime,
+			host    LowCardinality(String),
+			ip      String,
+			method  LowCardinality(String),
+			path    String,
+			status  UInt16,
+			bytes   UInt64,
+			ua      String,
+			ja4h    String,
+			action  LowCardinality(String),
+			country LowCardinality(String) DEFAULT '',
+			asn     UInt32 DEFAULT 0,
+			asn_org String DEFAULT ''
 		) ENGINE = MergeTree
 		PARTITION BY toYYYYMMDD(ts)
 		ORDER BY (host, ts)
-		TTL ts + INTERVAL 30 DAY`)
+		TTL ts + INTERVAL 30 DAY`); err != nil {
+		return err
+	}
+	// Backfill columns on tables created before GeoIP enrichment existed.
+	for _, alter := range []string{
+		"ALTER TABLE aegis_requests ADD COLUMN IF NOT EXISTS country LowCardinality(String) DEFAULT ''",
+		"ALTER TABLE aegis_requests ADD COLUMN IF NOT EXISTS asn UInt32 DEFAULT 0",
+		"ALTER TABLE aegis_requests ADD COLUMN IF NOT EXISTS asn_org String DEFAULT ''",
+	} {
+		if err := c.Exec(ctx, alter); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -90,6 +90,8 @@ export interface Insights {
   series?: InsightsPoint[];
   top_paths?: { path: string; count: number }[];
   statuses?: { status: number; count: number }[];
+  top_countries?: { country: string; count: number }[];
+  top_asns?: { asn: number; org: string; count: number }[];
 }
 
 export interface MetricsSummary {

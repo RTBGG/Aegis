@@ -133,6 +133,10 @@ shared edge Coraza engine — a sensitive surface:
 - **Trust boundary**: the events endpoint is authenticated with the agent token
   (same as config/telemetry); ClickHouse is reached only over the internal
   network.
+- **GeoIP**: country/ASN are resolved by a local in-memory lookup against the
+  public-domain iptoasn.com database (refreshed daily over HTTPS by the control
+  plane). No visitor IP is ever sent to a third-party geo service; the only
+  egress is the periodic database download. Disable with `GEOIP_ENABLED=off`.
 
 ## Known Phase 1 limitations (hardening backlog)
 
