@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import type { Domain, DnsRecord, DnssecInfo, SecurityPolicy, WafOverride, MetricsSummary } from "@/lib/types";
+import type { Domain, DnsRecord, DnssecInfo, SecurityPolicy, WafOverride, Insights, InsightsPoint } from "@/lib/types";
 import { Button, Input, Select, Field, Card, Badge, Toggle, Textarea, ErrorText } from "@/components/ui";
 
 type Tab = "dns" | "dnssec" | "security" | "analytics";
@@ -513,32 +513,175 @@ function WAFOverrides({ domainId }: { domainId: string }) {
   );
 }
 
+const fmtNum = (n: number) => n.toLocaleString();
+function fmtBytes(n: number): string {
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${u[i]}`;
+}
+
 function AnalyticsTab({ domainId }: { domainId: string }) {
-  const [m, setM] = useState<MetricsSummary | null>(null);
+  const [data, setData] = useState<Insights | null>(null);
+  const [window, setWindow] = useState<"24h" | "7d">("24h");
+
   useEffect(() => {
-    api.get<{ summary: MetricsSummary }>(`/domains/${domainId}/analytics`).then((r) => setM(r.summary)).catch(() => {});
-  }, [domainId]);
-  if (!m) return <div className="text-slate-400">Loading…</div>;
-  const rows: [string, number][] = [
-    ["Requests", m.requests],
-    ["Blocked by WAF", m.blocked_waf],
-    ["Rate limited / bot blocked", m.blocked_rate],
-    ["Challenged", m.challenged],
-    ["Cache hits", m.cache_hits],
-    ["Cache misses", m.cache_miss],
-  ];
+    setData(null);
+    api.get<Insights>(`/domains/${domainId}/insights?window=${window}`).then(setData).catch(() => {});
+  }, [domainId, window]);
+
+  if (!data) return <div className="text-slate-400">Loading…</div>;
+
+  if (!data.enabled) {
+    return (
+      <Card title="Analytics">
+        <p className="text-sm text-slate-400">
+          Detailed analytics require ClickHouse. Set <span className="font-mono">CLICKHOUSE_URL</span> and restart the control
+          plane to see per-request traffic, unique visitors, top paths and status codes.
+        </p>
+      </Card>
+    );
+  }
+
+  const s = data.summary ?? { requests: 0, visitors: 0, bytes: 0, blocked: 0, challenged: 0, cached: 0 };
+  const series = data.series ?? [];
+  const cacheRate = s.requests > 0 ? Math.round((s.cached / s.requests) * 100) : 0;
+  const topPaths = data.top_paths ?? [];
+  const maxPath = Math.max(1, ...topPaths.map((p) => p.count));
+  const statuses = data.statuses ?? [];
+
   return (
-    <Card title="Last 24 hours">
-      <table className="w-full text-sm">
-        <tbody className="divide-y divide-edge">
-          {rows.map(([k, v]) => (
-            <tr key={k}>
-              <td className="py-2 text-slate-400">{k}</td>
-              <td className="text-right font-mono">{v.toLocaleString()}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
+    <div className="space-y-5">
+      <div className="flex justify-end gap-1">
+        {(["24h", "7d"] as const).map((wnd) => (
+          <button
+            key={wnd}
+            onClick={() => setWindow(wnd)}
+            className={`rounded-md px-3 py-1 text-sm ${window === wnd ? "bg-accent text-white" : "bg-edge/50 text-slate-300"}`}
+          >
+            {wnd === "24h" ? "Last 24h" : "Last 7 days"}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        <Stat label="Requests" value={fmtNum(s.requests)} />
+        <Stat label="Unique visitors" value={fmtNum(s.visitors)} />
+        <Stat label="Bandwidth" value={fmtBytes(s.bytes)} />
+        <Stat label="Blocked" value={fmtNum(s.blocked)} tone="red" />
+        <Stat label="Challenged" value={fmtNum(s.challenged)} tone="amber" />
+        <Stat label="Cache hit rate" value={`${cacheRate}%`} />
+      </div>
+
+      <Card title="Traffic">
+        <TimeChart points={series} />
+        <div className="mt-3 flex gap-4 text-xs text-slate-400">
+          <Legend color="#5b8cff" label="requests" />
+          <Legend color="#f87171" label="blocked" />
+          <Legend color="#fbbf24" label="challenged" />
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+        <Card title="Top paths">
+          {topPaths.length === 0 ? (
+            <p className="text-sm text-slate-400">No data yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {topPaths.map((p) => (
+                <div key={p.path} className="text-sm">
+                  <div className="flex justify-between gap-2">
+                    <span className="truncate font-mono text-slate-300" title={p.path}>
+                      {p.path}
+                    </span>
+                    <span className="font-mono text-slate-400">{fmtNum(p.count)}</span>
+                  </div>
+                  <div className="mt-1 h-1.5 rounded bg-edge/50">
+                    <div className="h-1.5 rounded bg-accent" style={{ width: `${(p.count / maxPath) * 100}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+        <Card title="Status codes">
+          {statuses.length === 0 ? (
+            <p className="text-sm text-slate-400">No data yet.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-edge">
+                {statuses.map((st) => (
+                  <tr key={st.status}>
+                    <td className="py-2">
+                      <Badge tone={st.status < 300 ? "green" : st.status < 400 ? "blue" : st.status < 500 ? "amber" : "red"}>
+                        {st.status}
+                      </Badge>
+                    </td>
+                    <td className="text-right font-mono text-slate-400">{fmtNum(st.count)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "red" | "amber" }) {
+  const color = tone === "red" ? "text-red-300" : tone === "amber" ? "text-amber-300" : "text-white";
+  return (
+    <div className="rounded-xl border border-edge bg-panel/60 p-4">
+      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={`mt-1 text-2xl font-semibold ${color}`}>{value}</div>
+    </div>
+  );
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
+
+function TimeChart({ points }: { points: InsightsPoint[] }) {
+  if (points.length === 0) return <p className="text-sm text-slate-400">No traffic in this window yet.</p>;
+  const W = 760;
+  const H = 200;
+  const pad = 28;
+  const n = points.length;
+  const maxY = Math.max(1, ...points.map((p) => p.requests));
+  const x = (i: number) => pad + (i * (W - 2 * pad)) / Math.max(1, n - 1);
+  const y = (v: number) => H - pad - (v * (H - 2 * pad)) / maxY;
+  const path = (sel: (p: InsightsPoint) => number) =>
+    points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(sel(p)).toFixed(1)}`).join(" ");
+  const area = `${path((p) => p.requests)} L${x(n - 1).toFixed(1)},${H - pad} L${x(0).toFixed(1)},${H - pad} Z`;
+  const fmtT = (t: number) => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit" });
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="requests over time">
+      <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#2b3650" strokeWidth="1" />
+      <path d={area} fill="#5b8cff" fillOpacity="0.15" />
+      <path d={path((p) => p.requests)} fill="none" stroke="#5b8cff" strokeWidth="2" />
+      <path d={path((p) => p.blocked)} fill="none" stroke="#f87171" strokeWidth="1.5" />
+      <path d={path((p) => p.challenged)} fill="none" stroke="#fbbf24" strokeWidth="1.5" />
+      <text x={pad} y={H - 8} fill="#9aa6c0" fontSize="10">
+        {fmtT(points[0].t)}
+      </text>
+      <text x={W - pad} y={H - 8} fill="#9aa6c0" fontSize="10" textAnchor="end">
+        {fmtT(points[n - 1].t)}
+      </text>
+      <text x={pad} y={14} fill="#9aa6c0" fontSize="10">
+        peak {maxY.toLocaleString()}/bucket
+      </text>
+    </svg>
   );
 }

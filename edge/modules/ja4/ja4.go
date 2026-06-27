@@ -10,10 +10,14 @@ package ja4
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -43,7 +47,86 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhtt
 	caddyhttp.SetVar(r.Context(), "ja4h", fp)
 	r.Header.Set("X-Aegis-JA4H", fp)
 	metrics.Incr("requests")
-	return next.ServeHTTP(w, r)
+
+	// Record status/size without buffering the body, then emit a per-request
+	// analytics event for the ClickHouse pipeline.
+	rec := caddyhttp.NewResponseRecorder(w, nil, func(int, http.Header) bool { return false })
+	err := next.ServeHTTP(rec, r)
+	// Handlers like the WAF return a Caddy error instead of writing the response
+	// themselves (Caddy writes the error page to the original writer, bypassing
+	// the recorder), so recover the status from the error in that case.
+	status := rec.Status()
+	if status == 0 && err != nil {
+		var he caddyhttp.HandlerError
+		if errors.As(err, &he) {
+			status = he.StatusCode
+		}
+	}
+	emitEvent(r, fp, status, rec.Size(), rec.Header())
+	return err
+}
+
+// event mirrors the ClickHouse `aegis_requests` columns (JSONEachRow keys).
+type event struct {
+	TS     int64  `json:"ts"`
+	Host   string `json:"host"`
+	IP     string `json:"ip"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Status int    `json:"status"`
+	Bytes  int    `json:"bytes"`
+	UA     string `json:"ua"`
+	JA4H   string `json:"ja4h"`
+	Action string `json:"action"`
+}
+
+func emitEvent(r *http.Request, ja4h string, status, size int, respHeader http.Header) {
+	if status == 0 {
+		status = http.StatusOK
+	}
+	ev := event{
+		TS:     time.Now().Unix(),
+		Host:   r.Host,
+		IP:     clientIP(r),
+		Method: r.Method,
+		Path:   truncate(r.URL.Path, 256),
+		Status: status,
+		Bytes:  size,
+		UA:     truncate(r.UserAgent(), 256),
+		JA4H:   ja4h,
+		Action: classify(r, status, respHeader),
+	}
+	if b, err := json.Marshal(ev); err == nil {
+		metrics.PushEvent(string(b))
+	}
+}
+
+// classify buckets a request outcome for analytics.
+func classify(r *http.Request, status int, respHeader http.Header) string {
+	if flagged, _ := caddyhttp.GetVar(r.Context(), "aegis_challenge").(bool); flagged && status == http.StatusServiceUnavailable {
+		return "challenged"
+	}
+	if status == http.StatusForbidden || status == http.StatusTooManyRequests {
+		return "blocked"
+	}
+	if cs := strings.ToLower(respHeader.Get("Cache-Status")); strings.Contains(cs, "hit") {
+		return "cached"
+	}
+	return "allowed"
+}
+
+func clientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 // computeJA4H builds a JA4H-style fingerprint: a_b_c_d where

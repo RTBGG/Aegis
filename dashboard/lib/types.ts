@@ -66,6 +66,32 @@ export interface SecurityPolicy {
   captcha_secret_set: boolean;
 }
 
+export interface InsightsSummary {
+  requests: number;
+  visitors: number;
+  bytes: number;
+  blocked: number;
+  challenged: number;
+  cached: number;
+}
+
+export interface InsightsPoint {
+  t: number;
+  requests: number;
+  visitors: number;
+  blocked: number;
+  challenged: number;
+}
+
+export interface Insights {
+  enabled: boolean;
+  window: string;
+  summary?: InsightsSummary;
+  series?: InsightsPoint[];
+  top_paths?: { path: string; count: number }[];
+  statuses?: { status: number; count: number }[];
+}
+
 export interface MetricsSummary {
   requests: number;
   blocked_waf: number;

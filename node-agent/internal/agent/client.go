@@ -70,6 +70,29 @@ type telemetryPayload struct {
 	Metrics       []metricLine `json:"metrics"`
 }
 
+func (c Config) sendEvents(ctx context.Context, events []json.RawMessage) error {
+	body, err := json.Marshal(map[string]any{"events": events})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.ControlPlaneURL+"/edge/v1/events", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.AgentToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.authedClient(15 * time.Second).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("events: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c Config) sendTelemetry(ctx context.Context, p telemetryPayload) error {
 	body, err := json.Marshal(p)
 	if err != nil {

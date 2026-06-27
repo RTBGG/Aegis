@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strconv"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+const eventsKey = "aegis:events"
 
 // Run starts Caddy and the config/telemetry loops, blocking until ctx is
 // cancelled or Caddy exits.
@@ -131,7 +134,26 @@ func (c Config) telemetryLoop(ctx context.Context, version *atomic.Int64, log *s
 		if err := c.sendTelemetry(ctx, payload); err != nil && ctx.Err() == nil {
 			log.Warn("telemetry failed", "err", errString(err))
 		}
+		if evs := drainEvents(ctx, rdb); len(evs) > 0 {
+			if err := c.sendEvents(ctx, evs); err != nil && ctx.Err() == nil {
+				log.Warn("events ship failed", "err", errString(err), "count", len(evs))
+			}
+		}
 	}
+}
+
+// drainEvents atomically pops a batch of analytics events from Redis.
+func drainEvents(ctx context.Context, rdb *redis.Client) []json.RawMessage {
+	const max = 5000
+	res, err := rdb.LPopCount(ctx, eventsKey, max).Result()
+	if err != nil || len(res) == 0 {
+		return nil
+	}
+	out := make([]json.RawMessage, 0, len(res))
+	for _, s := range res {
+		out = append(out, json.RawMessage(s))
+	}
+	return out
 }
 
 // drainCounters reads and resets the edge counters set by the Caddy modules.

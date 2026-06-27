@@ -120,6 +120,20 @@ shared edge Coraza engine — a sensitive surface:
   per-edge `CHALLENGE_SECRET`; it is `HttpOnly`, `Secure` (on TLS), time-boxed,
   and not transferable to a different IP/UA.
 
+## Per-request analytics (Phase 2, ClickHouse)
+
+- **PII / retention**: request events include the client IP and User-Agent (for
+  unique-visitor counts and debugging). They live in ClickHouse with a 30-day
+  TTL and are scoped per account on read (domain ownership enforced). Operators
+  with stricter requirements can shorten the TTL or disable ClickHouse entirely
+  (`CLICKHOUSE_URL` unset) and keep only the aggregate Postgres counters.
+- **Injection**: events are inserted via `JSONEachRow` (values parsed, never
+  concatenated into SQL); analytics queries use ClickHouse query parameters.
+  Path/UA are length-capped at the edge.
+- **Trust boundary**: the events endpoint is authenticated with the agent token
+  (same as config/telemetry); ClickHouse is reached only over the internal
+  network.
+
 ## Known Phase 1 limitations (hardening backlog)
 
 - Agent auth is a shared bearer token, not per-node mTLS (P3).

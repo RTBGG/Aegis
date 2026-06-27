@@ -15,6 +15,13 @@ import (
 
 const Prefix = "aegis:m:"
 
+// EventsKey is the Redis list the edge appends per-request analytics events to;
+// the node-agent drains it and ships the batch to the control plane.
+const EventsKey = "aegis:events"
+
+// eventsCap bounds the events list so a stalled agent can't exhaust Redis.
+const eventsCap = 100_000
+
 var (
 	once   sync.Once
 	client *redis.Client
@@ -64,5 +71,22 @@ func Incr(name string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
 		_ = c.Incr(ctx, Prefix+name).Err()
+	}()
+}
+
+// PushEvent appends a JSON analytics event to the events list (fire-and-forget),
+// trimming the list to a bounded size.
+func PushEvent(jsonLine string) {
+	c := get()
+	if c == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		pipe := c.Pipeline()
+		pipe.RPush(ctx, EventsKey, jsonLine)
+		pipe.LTrim(ctx, EventsKey, -eventsCap, -1)
+		_, _ = pipe.Exec(ctx)
 	}()
 }

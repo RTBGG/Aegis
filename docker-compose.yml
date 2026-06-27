@@ -49,6 +49,26 @@ services:
       - "5300:53/tcp"
     restart: unless-stopped
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - chdata:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
   api:
     build:
       context: ./control-plane
@@ -59,6 +79,8 @@ services:
       redis:
         condition: service_healthy
       powerdns:
+        condition: service_started
+      clickhouse:
         condition: service_started
     ports:
       - "8080:8080"
@@ -117,5 +139,6 @@ services:
 
 volumes:
   pgdata:
+  chdata:
   caddydata:
   caddyconfig:

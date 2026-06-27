@@ -59,6 +59,7 @@ func NewRouter(d Deps) http.Handler {
 		r.Use(d.Edge.Authn)
 		r.Get("/config", d.Edge.Config)
 		r.Post("/telemetry", d.Edge.Telemetry)
+		r.Post("/events", d.Edge.Events)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -97,6 +98,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/domains/{domainID}/waf/overrides", d.Security.CreateOverride)
 			r.Delete("/domains/{domainID}/waf/overrides/{overrideID}", d.Security.DeleteOverride)
 			r.Get("/domains/{domainID}/analytics", d.Analytics.Domain)
+			r.Get("/domains/{domainID}/insights", d.Analytics.Insights)
 			r.Put("/records/{recordID}", d.Domains.UpdateRecord)
 			r.Delete("/records/{recordID}", d.Domains.DeleteRecord)
 			r.Get("/analytics/overview", d.Analytics.Overview)
