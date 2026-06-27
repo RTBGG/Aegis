@@ -19,6 +19,7 @@ import (
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/auth"
 	"github.com/aegis/control-plane/internal/config"
+	"github.com/aegis/control-plane/internal/mailer"
 	"github.com/aegis/control-plane/internal/store"
 	"github.com/aegis/control-plane/internal/threatfeed"
 	"github.com/aegis/control-plane/internal/web"
@@ -29,10 +30,11 @@ type Service struct {
 	Cfg    *appcfg.Config
 	Render *config.Renderer
 	Feeds  *threatfeed.Syncer
+	Mailer mailer.Mailer
 }
 
-func New(st *store.Store, cfg *appcfg.Config, r *config.Renderer, feeds *threatfeed.Syncer) *Service {
-	return &Service{Store: st, Cfg: cfg, Render: r, Feeds: feeds}
+func New(st *store.Store, cfg *appcfg.Config, r *config.Renderer, feeds *threatfeed.Syncer, ml mailer.Mailer) *Service {
+	return &Service{Store: st, Cfg: cfg, Render: r, Feeds: feeds, Mailer: ml}
 }
 
 // --- users ---
@@ -74,6 +76,33 @@ func (s *Service) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.Store.Audit(r.Context(), nil, &actor.ID, "admin.user_status", id.String(), "", map[string]any{"status": in.Status})
 	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// --- email / SMTP ---
+
+// EmailConfig returns the non-secret outbound-mail settings for the admin UI.
+func (s *Service) EmailConfig(w http.ResponseWriter, r *http.Request) {
+	web.JSON(w, http.StatusOK, map[string]any{
+		"mailer": s.Cfg.Mailer,
+		"addr":   s.Cfg.SMTP.Addr,
+		"from":   s.Cfg.SMTP.From,
+		"tls":    s.Cfg.SMTP.TLS,
+		"auth":   s.Cfg.SMTP.Username != "",
+	})
+}
+
+// TestEmail sends a test message to the requesting admin to verify mail delivery.
+func (s *Service) TestEmail(w http.ResponseWriter, r *http.Request) {
+	actor := auth.MustUser(r.Context())
+	subject := s.Cfg.Brand + " — SMTP test email"
+	body := fmt.Sprintf("This is a test email from %s confirming your outbound mail (MAILER=%s) is working.\n\nDelivered to: %s\n",
+		s.Cfg.Brand, s.Cfg.Mailer, actor.Email)
+	if err := s.Mailer.Send(r.Context(), actor.Email, subject, body); err != nil {
+		web.Error(w, http.StatusBadGateway, "mail_error", "send failed: "+err.Error())
+		return
+	}
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, "admin.test_email", actor.Email, r.RemoteAddr, nil)
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "sent_to": actor.Email})
 }
 
 // --- impersonation audit ---

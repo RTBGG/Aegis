@@ -105,6 +105,8 @@ func NewRouter(d Deps) http.Handler {
 				r.Post("/admin/users/{userID}/status", d.Admin.SetUserStatus)
 				r.Post("/admin/users/{userID}/impersonate", d.Auth.ImpersonateStart)
 				r.Get("/admin/impersonation-log", d.Admin.ImpersonationLog)
+				r.Get("/admin/email-config", d.Admin.EmailConfig)
+				r.Post("/admin/test-email", d.Admin.TestEmail)
 				r.Get("/admin/edges", d.Admin.Edges)
 				r.Get("/admin/analytics", d.Admin.Analytics)
 				r.Get("/admin/blocklists", d.Admin.ListBlocklists)

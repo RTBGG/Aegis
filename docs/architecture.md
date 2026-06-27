@@ -114,7 +114,7 @@ global blocklist, separate from the operator-managed `blocklists` table.
 ## Phases 2–3 (remaining)
 
 - P2: ClickHouse analytics, richer bot scoring + CAPTCHA, per-route WAF tuning +
-  custom SecRules import, billing, real SMTP. (Threat-feed ingestion →
-  auto-blocklists, DNSSEC, and audited admin impersonation are **built**.)
+  custom SecRules import, billing. (Threat-feed ingestion → auto-blocklists,
+  DNSSEC, audited admin impersonation, and real SMTP email are **built**.)
 - P3: multi-node edge enrollment over the served `install/edge.sh`, per-node
   mTLS PKI, GeoDNS/weighted edge distribution, HA control plane, anycast option.

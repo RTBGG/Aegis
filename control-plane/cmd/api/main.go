@@ -51,7 +51,7 @@ func main() {
 	}
 	defer st.Close()
 
-	ml := mailer.New(cfg.Mailer, cfg.SMTPAddr, "no-reply@"+cfg.Brand)
+	ml := mailer.New(cfg.Mailer, cfg.SMTP)
 	pdns := dns.NewClient(cfg.PDNSAPIURL, cfg.PDNSAPIKey)
 	renderer := config.New(st, cfg)
 	feeds := threatfeed.New(st, renderer)
@@ -72,7 +72,7 @@ func main() {
 		Domains:   domains.New(st, pdns, cfg, renderer),
 		Security:  security.New(st, renderer),
 		Analytics: analytics.New(st),
-		Admin:     admin.New(st, cfg, renderer, feeds),
+		Admin:     admin.New(st, cfg, renderer, feeds, ml),
 		Edge:      edgeapi.New(st, cfg),
 	}
 	srv := &http.Server{
