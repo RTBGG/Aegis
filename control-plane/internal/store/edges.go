@@ -18,14 +18,34 @@ func (s *Store) ListEdges(ctx context.Context) ([]Edge, error) {
 }
 
 // ListHealthyEdgesForLB returns edges eligible to serve traffic (healthy or
-// pending) with a non-zero weight, ordered by IP for deterministic rendering.
+// pending, not revoked) with a non-zero weight, ordered by IP for deterministic
+// rendering.
 func (s *Store) ListHealthyEdgesForLB(ctx context.Context) ([]Edge, error) {
 	rows, err := s.Pool.Query(ctx,
-		`SELECT * FROM edges WHERE status IN ('healthy','pending') AND weight > 0 ORDER BY public_ip`)
+		`SELECT * FROM edges WHERE status IN ('healthy','pending') AND weight > 0 AND revoked_at IS NULL ORDER BY public_ip`)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowToStructByNameLax[Edge])
+}
+
+// SetEdgeCert records an edge's current client certificate (serial + expiry).
+// Any earlier cert is implicitly superseded.
+func (s *Store) SetEdgeCert(ctx context.Context, id uuid.UUID, serial string, expires time.Time) error {
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE edges SET cert_serial=$2, cert_expires_at=$3 WHERE id=$1`, id, serial, expires)
+	return err
+}
+
+// SetEdgeRevoked marks (or clears) an edge's revocation. A revoked edge's client
+// cert is rejected at the mTLS layer and it is removed from the LB pool.
+func (s *Store) SetEdgeRevoked(ctx context.Context, id uuid.UUID, revoked bool) error {
+	if revoked {
+		_, err := s.Pool.Exec(ctx, `UPDATE edges SET revoked_at=now(), status='draining' WHERE id=$1`, id)
+		return err
+	}
+	_, err := s.Pool.Exec(ctx, `UPDATE edges SET revoked_at=NULL WHERE id=$1`, id)
+	return err
 }
 
 // SetEdgeWeight updates an edge's traffic weight (0 drains it).
@@ -146,7 +166,8 @@ func (s *Store) EnrollEdge(ctx context.Context, enrollTokenHash, name, publicIP,
 		 VALUES ($1,$2,$3,'pending',$4, now())
 		 ON CONFLICT (name) DO UPDATE SET
 		     public_ip=EXCLUDED.public_ip, region=EXCLUDED.region,
-		     status='pending', agent_token_hash=EXCLUDED.agent_token_hash, enrolled_at=now()
+		     status='pending', agent_token_hash=EXCLUDED.agent_token_hash, enrolled_at=now(),
+		     revoked_at=NULL
 		 RETURNING *`, name, publicIP, region, agentTokenHash)
 	if err != nil {
 		return nil, err

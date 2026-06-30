@@ -95,6 +95,9 @@ type Edge struct {
 	AgentVersion   *string    `db:"agent_version" json:"agent_version"`
 	AgentTokenHash *string    `db:"agent_token_hash" json:"-"`
 	EnrolledAt     *time.Time `db:"enrolled_at" json:"enrolled_at"`
+	CertSerial     *string    `db:"cert_serial" json:"-"`
+	CertExpiresAt  *time.Time `db:"cert_expires_at" json:"cert_expires_at"`
+	RevokedAt      *time.Time `db:"revoked_at" json:"revoked_at"`
 	LastSeenAt     *time.Time `db:"last_seen_at" json:"last_seen_at"`
 	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
 }

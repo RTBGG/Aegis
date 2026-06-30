@@ -128,6 +128,11 @@ function Edges() {
     await api.post(`/admin/edges/${e.id}/region`, { region });
     load();
   }
+  async function setRevoked(e: Edge, revoked: boolean) {
+    if (revoked && !confirm(`Revoke ${e.name}? Its certificate is rejected immediately and it leaves the load balancer.`)) return;
+    await api.post(`/admin/edges/${e.id}/revoke`, { revoked });
+    load();
+  }
   return (
     <Card title="Edge fleet">
       <p className="mb-3 text-sm text-slate-400">
@@ -145,6 +150,7 @@ function Edges() {
             <th>Agent</th>
             <th>Enrolled</th>
             <th>Last seen</th>
+            <th></th>
           </tr>
         </thead>
         <tbody className="divide-y divide-edge">
@@ -166,7 +172,11 @@ function Edges() {
                 </select>
               </td>
               <td>
-                <Badge tone={e.status === "healthy" ? "green" : e.status === "pending" ? "amber" : "red"}>{e.status}</Badge>
+                {e.revoked_at ? (
+                  <Badge tone="red">revoked</Badge>
+                ) : (
+                  <Badge tone={e.status === "healthy" ? "green" : e.status === "pending" ? "amber" : "red"}>{e.status}</Badge>
+                )}
               </td>
               <td>
                 <input
@@ -182,6 +192,18 @@ function Edges() {
               <td className="text-slate-400">{e.agent_version ?? "—"}</td>
               <td className="text-slate-400">{e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : "local"}</td>
               <td className="text-slate-400">{e.last_seen_at ? new Date(e.last_seen_at).toLocaleTimeString() : "—"}</td>
+              <td className="text-right">
+                {e.enrolled_at &&
+                  (e.revoked_at ? (
+                    <button onClick={() => setRevoked(e, false)} className="text-emerald-400 hover:underline">
+                      restore
+                    </button>
+                  ) : (
+                    <button onClick={() => setRevoked(e, true)} className="text-red-400 hover:underline">
+                      revoke
+                    </button>
+                  ))}
+              </td>
             </tr>
           ))}
         </tbody>

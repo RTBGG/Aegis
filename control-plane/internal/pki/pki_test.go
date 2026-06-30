@@ -36,7 +36,7 @@ func newCA(t *testing.T) *CA {
 
 func TestClientCert_VerifiesAndCarriesCN(t *testing.T) {
 	ca := newCA(t)
-	certPEM, keyPEM, err := ca.IssueClient("edge-123", time.Hour)
+	certPEM, keyPEM, serial, notAfter, err := ca.IssueClient("edge-123", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +46,16 @@ func TestClientCert_VerifiesAndCarriesCN(t *testing.T) {
 	leaf := loadLeaf(t, certPEM)
 	if leaf.Subject.CommonName != "edge-123" {
 		t.Fatalf("CN = %q, want edge-123", leaf.Subject.CommonName)
+	}
+	if leaf.SerialNumber.String() != serial {
+		t.Fatalf("returned serial %q != cert serial %q", serial, leaf.SerialNumber.String())
+	}
+	if notAfter.Before(time.Now()) {
+		t.Fatal("notAfter should be in the future")
+	}
+	// A fresh issue has a different serial (no reuse).
+	if _, _, s2, _, _ := ca.IssueClient("edge-123", time.Hour); s2 == serial {
+		t.Fatal("two issues must have distinct serials")
 	}
 	if _, err := leaf.Verify(x509.VerifyOptions{
 		Roots:     ca.Pool(),
@@ -75,7 +85,7 @@ func TestServerCert_HasSANs(t *testing.T) {
 
 func TestForeignCertRejected(t *testing.T) {
 	ca1, ca2 := newCA(t), newCA(t)
-	certPEM, _, _ := ca1.IssueClient("edge-x", time.Hour)
+	certPEM, _, _, _, _ := ca1.IssueClient("edge-x", time.Hour)
 	leaf := loadLeaf(t, certPEM)
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: ca2.Pool(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err == nil {
 		t.Fatal("a cert from a different CA must not verify")

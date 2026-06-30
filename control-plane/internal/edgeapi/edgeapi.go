@@ -56,7 +56,8 @@ func (a *API) AuthnMTLS(next http.Handler) http.Handler {
 			web.Error(w, http.StatusUnauthorized, "unauthorized", "client certificate required")
 			return
 		}
-		id, err := uuid.Parse(r.TLS.PeerCertificates[0].Subject.CommonName)
+		peer := r.TLS.PeerCertificates[0]
+		id, err := uuid.Parse(peer.Subject.CommonName)
 		if err != nil {
 			web.Error(w, http.StatusForbidden, "forbidden", "client certificate has no edge identity")
 			return
@@ -64,6 +65,16 @@ func (a *API) AuthnMTLS(next http.Handler) http.Handler {
 		edge, err := a.Store.GetEdge(r.Context(), id)
 		if err != nil {
 			web.Error(w, http.StatusForbidden, "forbidden", "unknown edge")
+			return
+		}
+		if edge.RevokedAt != nil {
+			web.Error(w, http.StatusForbidden, "revoked", "edge certificate has been revoked")
+			return
+		}
+		// Reject a superseded cert: only the edge's current (latest-issued) serial
+		// is accepted, so a rotated-out cert is implicitly revoked.
+		if edge.CertSerial != nil && *edge.CertSerial != peer.SerialNumber.String() {
+			web.Error(w, http.StatusForbidden, "superseded", "client certificate has been superseded; renew required")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), edgeCtxKey, edge)))
@@ -172,6 +183,33 @@ func (a *API) Authn(next http.Handler) http.Handler {
 	})
 }
 
+// RenewCert issues a fresh client certificate to an already-authenticated edge
+// (over its current mTLS connection) and records it as the edge's current cert,
+// superseding the old one. Served on the mTLS listener.
+func (a *API) RenewCert(w http.ResponseWriter, r *http.Request) {
+	edge := edgeFromCtx(r.Context())
+	if edge == nil || a.CA == nil {
+		web.Error(w, http.StatusForbidden, "forbidden", "mTLS edge identity required")
+		return
+	}
+	certPEM, keyPEM, serial, notAfter, err := a.CA.IssueClient(edge.ID.String(), clientCertTTL)
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not issue certificate")
+		return
+	}
+	if err := a.Store.SetEdgeCert(r.Context(), edge.ID, serial, notAfter); err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not record certificate")
+		return
+	}
+	_ = a.Store.Audit(r.Context(), nil, nil, "edge.cert_renew", edge.Name, clientIP(r), map[string]any{"edge_id": edge.ID.String()})
+	web.JSON(w, http.StatusOK, map[string]any{
+		"cert_b64":   base64.StdEncoding.EncodeToString(certPEM),
+		"key_b64":    base64.StdEncoding.EncodeToString(keyPEM),
+		"ca_b64":     base64.StdEncoding.EncodeToString(a.CA.CertPEM),
+		"expires_at": notAfter,
+	})
+}
+
 // Enroll exchanges a single-use enrollment token for a durable per-node agent
 // token and registers the edge. It is unauthenticated except by the enrollment
 // token itself. On success the new edge joins the DNS rotation immediately.
@@ -223,11 +261,12 @@ func (a *API) Enroll(w http.ResponseWriter, r *http.Request) {
 		"challenge_secret":  a.Cfg.ChallengeSecret,
 	}
 	if a.CA != nil {
-		certPEM, keyPEM, cerr := a.CA.IssueClient(edge.ID.String(), clientCertTTL)
+		certPEM, keyPEM, serial, notAfter, cerr := a.CA.IssueClient(edge.ID.String(), clientCertTTL)
 		if cerr != nil {
 			web.Error(w, http.StatusInternalServerError, "internal", "could not issue client certificate")
 			return
 		}
+		_ = a.Store.SetEdgeCert(r.Context(), edge.ID, serial, notAfter)
 		resp["control_plane_mtls_url"] = a.Cfg.ControlPlaneMTLSURL
 		resp["cert_b64"] = base64.StdEncoding.EncodeToString(certPEM)
 		resp["key_b64"] = base64.StdEncoding.EncodeToString(keyPEM)

@@ -148,6 +148,8 @@ export interface Edge {
   weight: number;
   agent_version: string | null;
   enrolled_at: string | null;
+  cert_expires_at: string | null;
+  revoked_at: string | null;
   last_seen_at: string | null;
   created_at: string;
 }
