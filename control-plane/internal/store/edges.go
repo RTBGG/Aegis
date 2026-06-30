@@ -17,6 +17,23 @@ func (s *Store) ListEdges(ctx context.Context) ([]Edge, error) {
 	return pgx.CollectRows(rows, pgx.RowToStructByNameLax[Edge])
 }
 
+// ListHealthyEdgesForLB returns edges eligible to serve traffic (healthy or
+// pending) with a non-zero weight, ordered by IP for deterministic rendering.
+func (s *Store) ListHealthyEdgesForLB(ctx context.Context) ([]Edge, error) {
+	rows, err := s.Pool.Query(ctx,
+		`SELECT * FROM edges WHERE status IN ('healthy','pending') AND weight > 0 ORDER BY public_ip`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByNameLax[Edge])
+}
+
+// SetEdgeWeight updates an edge's traffic weight (0 drains it).
+func (s *Store) SetEdgeWeight(ctx context.Context, id uuid.UUID, weight int32) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE edges SET weight=$2 WHERE id=$1`, id, weight)
+	return err
+}
+
 // ListHealthyEdgeIPs returns the public IPs of edges eligible to serve traffic.
 func (s *Store) ListHealthyEdgeIPs(ctx context.Context) ([]string, error) {
 	rows, err := s.Pool.Query(ctx,

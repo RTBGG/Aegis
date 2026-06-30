@@ -117,6 +117,7 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/admin/email-config", d.Admin.EmailConfig)
 				r.Post("/admin/test-email", d.Admin.TestEmail)
 				r.Get("/admin/edges", d.Admin.Edges)
+				r.Post("/admin/edges/{id}/weight", d.Admin.SetEdgeWeight)
 				r.Get("/admin/analytics", d.Admin.Analytics)
 				r.Get("/admin/blocklists", d.Admin.ListBlocklists)
 				r.Post("/admin/blocklists", d.Admin.CreateBlocklist)

@@ -91,6 +91,7 @@ type Edge struct {
 	PublicIP       string     `db:"public_ip" json:"public_ip"`
 	Region         string     `db:"region" json:"region"`
 	Status         string     `db:"status" json:"status"`
+	Weight         int32      `db:"weight" json:"weight"`
 	AgentVersion   *string    `db:"agent_version" json:"agent_version"`
 	AgentTokenHash *string    `db:"agent_token_hash" json:"-"`
 	EnrolledAt     *time.Time `db:"enrolled_at" json:"enrolled_at"`

@@ -38,10 +38,23 @@ customer traffic).
 ## Proxied vs DNS-only records
 
 - **DNS-only**: PowerDNS serves the record's real content.
-- **Proxied** (A/AAAA/CNAME): PowerDNS serves the **edge IP**; the record's real
-  content is kept as the proxy **origin**, and a Caddy site block is rendered for
-  that hostname. This is the "orange-cloud" toggle. Zone reconciliation lives in
+- **Proxied** (A/AAAA/CNAME): PowerDNS serves a **weighted Lua record** over the
+  edge pool (see below); the record's real content is kept as the proxy
+  **origin**, and a Caddy site block is rendered for that hostname. This is the
+  "orange-cloud" toggle. Zone reconciliation lives in
   `control-plane/internal/domains/service.go` (`syncZone`).
+
+## Weighted edge distribution (Phase 3)
+
+Proxied hosts are published as a PowerDNS **`LUA` record** rather than a static
+A set: `syncZone` renders `A "pickwhashed({ {weight,'ip'}, … })"` over the
+healthy edge pool (`enable-lua-records` + `edns-subnet-processing` in
+`pdns.conf`). `pickwhashed` splits traffic **proportionally by weight** and is
+**consistent per client** (a given resolver/subnet sticks to one edge). Each
+edge has a `weight` (0 drains it without removing it), editable in Admin → Edges;
+a change re-publishes the proxied records (`ReconcileEdges`). Enrolled edges join
+the pool automatically. (Per-query GeoDNS by client location is the next step —
+it adds the PowerDNS geoip backend + a country database.)
 
 ## DNSSEC (Phase 2)
 
@@ -193,9 +206,10 @@ global blocklist, separate from the operator-managed `blocklists` table.
   audited admin impersonation, real SMTP email, per-route WAF tuning + custom
   SecRules import, richer bot scoring + managed/CAPTCHA challenges, and
   ClickHouse per-request analytics.
-- P3: multi-node edge enrollment + per-node mTLS are **built** (see below);
-  remaining: cert rotation + revocation (CRL), signed image distribution,
-  GeoDNS/weighted edge distribution, HA control plane, anycast option.
+- P3: multi-node edge enrollment, per-node mTLS, and weighted edge distribution
+  are **built** (see below); remaining: per-query GeoDNS by client location
+  (geoip backend + DB), cert rotation + revocation (CRL), signed image
+  distribution, HA control plane, anycast option.
 
 ## Multi-node edge enrollment (Phase 3)
 

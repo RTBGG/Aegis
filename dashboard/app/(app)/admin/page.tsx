@@ -114,11 +114,20 @@ function Users() {
 
 function Edges() {
   const [edges, setEdges] = useState<Edge[]>([]);
-  useEffect(() => {
+  function load() {
     api.get<{ edges: Edge[] }>("/admin/edges").then((r) => setEdges(r.edges ?? [])).catch(() => {});
-  }, []);
+  }
+  useEffect(load, []);
+  async function setWeight(e: Edge, weight: number) {
+    if (weight === e.weight || Number.isNaN(weight)) return;
+    await api.post(`/admin/edges/${e.id}/weight`, { weight });
+    load();
+  }
   return (
     <Card title="Edge fleet">
+      <p className="mb-3 text-sm text-slate-400">
+        Weight splits proxied traffic across the pool (DNS, sticky per client). 0 drains an edge without removing it.
+      </p>
       <table className="w-full text-sm">
         <thead className="text-left text-xs uppercase text-slate-500">
           <tr>
@@ -126,6 +135,7 @@ function Edges() {
             <th>IP</th>
             <th>Region</th>
             <th>Status</th>
+            <th>Weight</th>
             <th>Agent</th>
             <th>Enrolled</th>
             <th>Last seen</th>
@@ -139,6 +149,17 @@ function Edges() {
               <td>{e.region}</td>
               <td>
                 <Badge tone={e.status === "healthy" ? "green" : e.status === "pending" ? "amber" : "red"}>{e.status}</Badge>
+              </td>
+              <td>
+                <input
+                  type="number"
+                  min={0}
+                  max={1000}
+                  defaultValue={e.weight}
+                  onBlur={(ev) => setWeight(e, Number(ev.target.value))}
+                  onKeyDown={(ev) => ev.key === "Enter" && (ev.target as HTMLInputElement).blur()}
+                  className="w-16 rounded border border-edge bg-ink/60 px-2 py-1 text-sm outline-none focus:border-accent"
+                />
               </td>
               <td className="text-slate-400">{e.agent_version ?? "—"}</td>
               <td className="text-slate-400">{e.enrolled_at ? new Date(e.enrolled_at).toLocaleDateString() : "local"}</td>
