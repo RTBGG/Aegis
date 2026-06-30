@@ -3,8 +3,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,6 +25,7 @@ import (
 	"github.com/aegis/control-plane/internal/geoip"
 	"github.com/aegis/control-plane/internal/httpapi"
 	"github.com/aegis/control-plane/internal/mailer"
+	"github.com/aegis/control-plane/internal/pki"
 	"github.com/aegis/control-plane/internal/security"
 	"github.com/aegis/control-plane/internal/store"
 	"github.com/aegis/control-plane/internal/threatfeed"
@@ -71,6 +74,12 @@ func main() {
 		slog.Info("geoip enrichment enabled")
 	}
 
+	ca, err := ensureCA(ctx, st)
+	if err != nil {
+		slog.Error("pki", "err", err)
+		os.Exit(1)
+	}
+
 	if err := bootstrap(ctx, st, cfg); err != nil {
 		slog.Error("bootstrap", "err", err)
 		os.Exit(1)
@@ -89,7 +98,7 @@ func main() {
 		Security:  security.New(st, renderer),
 		Analytics: analytics.New(st, ch),
 		Admin:     admin.New(st, cfg, renderer, feeds, ml),
-		Edge:      edgeapi.New(st, cfg, ch, geoDB, dom),
+		Edge:      edgeapi.New(st, cfg, ch, geoDB, dom, ca),
 	}
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -100,6 +109,13 @@ func main() {
 	if cfg.ThreatFeedSync {
 		go feeds.Run(ctx)
 		slog.Info("threat-feed sync enabled")
+	}
+
+	if cfg.MTLSEnabled {
+		if err := startEdgeMTLS(ctx, cfg, ca, httpapi.NewEdgeMTLSRouter(deps.Edge)); err != nil {
+			slog.Error("edge mTLS listener", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	go func() {
@@ -153,6 +169,63 @@ func ensureClickHouse(ctx context.Context, ch *clickhouse.Client) {
 		}
 	}
 	slog.Warn("clickhouse schema not ready; analytics may be degraded")
+}
+
+// ensureCA loads the edge CA from the pki table, generating + persisting one on
+// first boot (first writer wins, so HA replicas converge).
+func ensureCA(ctx context.Context, st *store.Store) (*pki.CA, error) {
+	certPEM, keyPEM, err := st.GetPKI(ctx, "edge-ca")
+	if errors.Is(err, store.ErrNotFound) {
+		c, k, gerr := pki.Generate()
+		if gerr != nil {
+			return nil, gerr
+		}
+		if serr := st.SavePKI(ctx, "edge-ca", string(c), string(k)); serr != nil {
+			return nil, serr
+		}
+		certPEM, keyPEM, err = st.GetPKI(ctx, "edge-ca")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return pki.Load([]byte(certPEM), []byte(keyPEM))
+}
+
+// startEdgeMTLS serves the edge API on a dedicated TLS listener that requires a
+// client certificate signed by our CA.
+func startEdgeMTLS(ctx context.Context, cfg *appcfg.Config, ca *pki.CA, h http.Handler) error {
+	serverCertPEM, serverKeyPEM, err := ca.IssueServer(cfg.MTLSServerNames, []net.IP{net.IPv4(127, 0, 0, 1)}, 825*24*time.Hour)
+	if err != nil {
+		return err
+	}
+	serverCert, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{
+		Addr:    ":" + cfg.MTLSPort,
+		Handler: h,
+		TLSConfig: &tls.Config{
+			MinVersion:   tls.VersionTLS12,
+			Certificates: []tls.Certificate{serverCert},
+			ClientCAs:    ca.Pool(),
+			ClientAuth:   tls.RequireAndVerifyClientCert,
+		},
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		slog.Info("edge mTLS listening", "addr", srv.Addr, "sans", cfg.MTLSServerNames)
+		if err := srv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("edge mTLS server", "err", err)
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		sc, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sc)
+	}()
+	return nil
 }
 
 // bootstrap seeds the superadmin and the local edge on first boot.

@@ -84,6 +84,7 @@ services:
         condition: service_started
     ports:
       - "8080:8080"
+      - "8443:8443" # edge mTLS listener (per-node client certs)
     restart: unless-stopped
 
   dashboard:

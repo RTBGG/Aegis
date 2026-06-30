@@ -3,6 +3,7 @@ package appcfg
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -56,6 +57,13 @@ type Config struct {
 	GeoIPEnabled bool
 	GeoIPV4URL   string
 	GeoIPV6URL   string
+
+	// mTLS: a dedicated TLS listener serving the edge API, authenticating edges
+	// by their per-node client certificate (issued at enrollment).
+	MTLSEnabled         bool
+	MTLSPort            string
+	MTLSServerNames     []string // SANs for the listener's server cert
+	ControlPlaneMTLSURL string   // URL enrolled edges dial for the mTLS edge API
 }
 
 // SMTPConfig holds outbound mail settings used when MAILER=smtp.
@@ -107,6 +115,9 @@ func Load() (*Config, error) {
 		GeoIPEnabled: envBool("GEOIP_ENABLED", true),
 		GeoIPV4URL:   env("GEOIP_V4_URL", "https://iptoasn.com/data/ip2asn-v4.tsv.gz"),
 		GeoIPV6URL:   env("GEOIP_V6_URL", "https://iptoasn.com/data/ip2asn-v6.tsv.gz"),
+
+		MTLSEnabled: envBool("MTLS_ENABLED", true),
+		MTLSPort:    env("MTLS_PORT", "8443"),
 	}
 	c.SessionSecret = []byte(os.Getenv("SESSION_SECRET"))
 	c.CSRFSecret = []byte(os.Getenv("CSRF_SECRET"))
@@ -143,7 +154,28 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("SMTP_ADDR is required when MAILER=smtp")
 		}
 	}
+
+	// Derive mTLS server SANs + the URL edges dial from the control-plane host.
+	cpHost := hostOf(c.ControlPlaneURL)
+	if names := os.Getenv("MTLS_SERVER_NAMES"); names != "" {
+		for _, n := range strings.Split(names, ",") {
+			if n = strings.TrimSpace(n); n != "" {
+				c.MTLSServerNames = append(c.MTLSServerNames, n)
+			}
+		}
+	} else {
+		c.MTLSServerNames = []string{cpHost, "localhost", "api"}
+	}
+	c.ControlPlaneMTLSURL = env("MTLS_PUBLIC_URL", "https://"+cpHost+":"+c.MTLSPort)
 	return c, nil
+}
+
+// hostOf extracts the hostname from a URL, falling back to "localhost".
+func hostOf(rawurl string) string {
+	if u, err := url.Parse(rawurl); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return "localhost"
 }
 
 func env(key, def string) string {

@@ -133,6 +133,23 @@ func NewRouter(d Deps) http.Handler {
 	return r
 }
 
+// NewEdgeMTLSRouter builds the handler for the dedicated mTLS listener: the edge
+// API authenticated by per-node client certificate (no bearer token).
+func NewEdgeMTLSRouter(edge *edgeapi.API) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(60 * time.Second))
+	r.Route("/edge/v1", func(r chi.Router) {
+		r.Use(edge.AuthnMTLS)
+		r.Get("/config", edge.Config)
+		r.Post("/telemetry", edge.Telemetry)
+		r.Post("/events", edge.Events)
+	})
+	return r
+}
+
 // corsMiddleware permits the dashboard origin to call the API with credentials.
 func corsMiddleware(cfg *appcfg.Config) func(http.Handler) http.Handler {
 	allowed := map[string]bool{

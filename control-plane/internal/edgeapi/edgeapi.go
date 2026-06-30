@@ -19,11 +19,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/clickhouse"
 	"github.com/aegis/control-plane/internal/config"
 	"github.com/aegis/control-plane/internal/domains"
 	"github.com/aegis/control-plane/internal/geoip"
+	"github.com/aegis/control-plane/internal/pki"
 	"github.com/aegis/control-plane/internal/store"
 	"github.com/aegis/control-plane/internal/web"
 )
@@ -34,10 +37,37 @@ type API struct {
 	CH      *clickhouse.Client
 	Geo     *geoip.DB
 	Domains *domains.Service
+	CA      *pki.CA
 }
 
-func New(st *store.Store, cfg *appcfg.Config, ch *clickhouse.Client, geo *geoip.DB, dom *domains.Service) *API {
-	return &API{Store: st, Cfg: cfg, CH: ch, Geo: geo, Domains: dom}
+func New(st *store.Store, cfg *appcfg.Config, ch *clickhouse.Client, geo *geoip.DB, dom *domains.Service, ca *pki.CA) *API {
+	return &API{Store: st, Cfg: cfg, CH: ch, Geo: geo, Domains: dom, CA: ca}
+}
+
+// clientCertTTL is the lifetime of an edge's per-node client certificate.
+const clientCertTTL = 90 * 24 * time.Hour
+
+// AuthnMTLS authenticates an edge by its verified client certificate (the TLS
+// layer has already checked the chain against our CA). The cert CommonName is
+// the edge UUID; the resolved edge is attached to the request context.
+func (a *API) AuthnMTLS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+			web.Error(w, http.StatusUnauthorized, "unauthorized", "client certificate required")
+			return
+		}
+		id, err := uuid.Parse(r.TLS.PeerCertificates[0].Subject.CommonName)
+		if err != nil {
+			web.Error(w, http.StatusForbidden, "forbidden", "client certificate has no edge identity")
+			return
+		}
+		edge, err := a.Store.GetEdge(r.Context(), id)
+		if err != nil {
+			web.Error(w, http.StatusForbidden, "forbidden", "unknown edge")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), edgeCtxKey, edge)))
+	})
 }
 
 type ctxKey int
@@ -182,6 +212,28 @@ func (a *API) Enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Issue a per-node mTLS client certificate (CN = edge id) signed by our CA.
+	resp := map[string]any{
+		"edge_id":           edge.ID,
+		"name":              edge.Name,
+		"region":            edge.Region,
+		"public_ip":         edge.PublicIP,
+		"agent_token":       agentToken,
+		"control_plane_url": a.Cfg.ControlPlaneURL,
+		"challenge_secret":  a.Cfg.ChallengeSecret,
+	}
+	if a.CA != nil {
+		certPEM, keyPEM, cerr := a.CA.IssueClient(edge.ID.String(), clientCertTTL)
+		if cerr != nil {
+			web.Error(w, http.StatusInternalServerError, "internal", "could not issue client certificate")
+			return
+		}
+		resp["control_plane_mtls_url"] = a.Cfg.ControlPlaneMTLSURL
+		resp["cert_b64"] = base64.StdEncoding.EncodeToString(certPEM)
+		resp["key_b64"] = base64.StdEncoding.EncodeToString(keyPEM)
+		resp["ca_b64"] = base64.StdEncoding.EncodeToString(a.CA.CertPEM)
+	}
+
 	// Bring the new edge into the DNS rotation + LB pools (re-sync proxied zones).
 	if a.Domains != nil {
 		rc, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -190,15 +242,7 @@ func (a *API) Enroll(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = a.Store.Audit(r.Context(), nil, nil, "edge.enroll", edge.Name, clientIP(r), map[string]any{"edge_id": edge.ID.String(), "public_ip": edge.PublicIP})
 
-	web.JSON(w, http.StatusOK, map[string]any{
-		"edge_id":           edge.ID,
-		"name":              edge.Name,
-		"region":            edge.Region,
-		"public_ip":         edge.PublicIP,
-		"agent_token":       agentToken,
-		"control_plane_url": a.Cfg.ControlPlaneURL,
-		"challenge_secret":  a.Cfg.ChallengeSecret,
-	})
+	web.JSON(w, http.StatusOK, resp)
 }
 
 func edgeName(n string) string {
