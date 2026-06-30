@@ -68,8 +68,7 @@ func buildTransport(c Config) *http.Transport {
 	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" {
 		return nil
 	}
-	cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
-	if err != nil {
+	if _, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile); err != nil {
 		slog.Warn("mtls: load client keypair failed; using plain transport", "err", err)
 		return nil
 	}
@@ -83,11 +82,17 @@ func buildTransport(c Config) *http.Transport {
 		slog.Warn("mtls: no certs in CA file; using plain transport")
 		return nil
 	}
-	slog.Info("edge mTLS enabled", "cert", c.CertFile)
+	// Load the client cert per-handshake so a rotated cert is picked up on new
+	// connections without restarting the agent.
+	certFile, keyFile := c.CertFile, c.KeyFile
+	slog.Info("edge mTLS enabled", "cert", certFile)
 	return &http.Transport{TLSClientConfig: &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      pool,
-		MinVersion:   tls.VersionTLS12,
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+			return &cert, err
+		},
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
 	}}
 }
 

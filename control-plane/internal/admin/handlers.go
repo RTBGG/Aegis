@@ -216,6 +216,37 @@ func (s *Service) SetEdgeRegion(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "region": in.Region})
 }
 
+// RevokeEdge revokes (or restores) an edge: a revoked edge's client certificate
+// is rejected at the mTLS layer and it is removed from the LB pool.
+func (s *Service) RevokeEdge(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_id", "invalid edge id")
+		return
+	}
+	var in struct {
+		Revoked bool `json:"revoked"`
+	}
+	if err := web.Decode(w, r, &in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := s.Store.SetEdgeRevoked(r.Context(), id, in.Revoked); err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not update edge")
+		return
+	}
+	actor := auth.MustUser(r.Context())
+	action := "admin.edge_revoke"
+	if !in.Revoked {
+		action = "admin.edge_unrevoke"
+	}
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, action, id.String(), "", nil)
+	if s.Domains != nil {
+		_ = s.Domains.ReconcileEdges(r.Context())
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "revoked": in.Revoked})
+}
+
 // --- global analytics ---
 
 func (s *Service) Analytics(w http.ResponseWriter, r *http.Request) {

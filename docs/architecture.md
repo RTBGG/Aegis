@@ -215,9 +215,9 @@ global blocklist, separate from the operator-managed `blocklists` table.
   audited admin impersonation, real SMTP email, per-route WAF tuning + custom
   SecRules import, richer bot scoring + managed/CAPTCHA challenges, and
   ClickHouse per-request analytics.
-- P3: multi-node edge enrollment, per-node mTLS, and weighted + GeoDNS edge
-  distribution are **built** (see below); remaining: cert rotation + revocation
-  (CRL), signed image distribution, HA control plane, anycast option.
+- P3: multi-node edge enrollment, per-node mTLS (with cert rotation +
+  revocation), and weighted + GeoDNS edge distribution are **built** (see below);
+  remaining: signed image distribution, HA control plane, anycast option.
 
 ## Multi-node edge enrollment (Phase 3)
 
@@ -253,5 +253,14 @@ A dedicated TLS listener (`MTLS_PORT`, default 8443) serves the edge API with
 `RequireAndVerifyClientCert` against the CA. The edge identity is taken from the
 verified cert's CN — no bearer token, no name spoofing. The node-agent uses the
 client cert + CA to dial `control_plane_mtls_url`; the all-in-one local edge
-keeps using the bearer channel. Signed binary/image distribution, cert rotation
-and a CRL/revocation path are the remaining hardening steps.
+keeps using the bearer channel.
+
+**Rotation + revocation**: each edge's current client cert (serial + expiry) is
+recorded on the `edges` row. `AuthnMTLS` rejects a cert whose serial is not the
+edge's current one (so a rotated-out cert is implicitly revoked) and any edge
+with `revoked_at` set. The agent renews before expiry over its current mTLS
+connection (`POST /edge/v1/renew-cert`, in the last third of the cert's lifetime)
+and reloads the cert via a `GetClientCertificate` callback — no restart. Admins
+revoke a node from Admin → Edges (`POST /admin/edges/{id}/revoke`): its cert is
+rejected immediately and it is dropped from the LB pool. Signed binary/image
+distribution is the remaining hardening step.

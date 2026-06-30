@@ -43,6 +43,7 @@ func Run(ctx context.Context) error {
 
 	go cfg.configLoop(ctx, &version, log)
 	go cfg.telemetryLoop(ctx, &version, log)
+	go cfg.rotateLoop(ctx, log)
 
 	select {
 	case <-ctx.Done():

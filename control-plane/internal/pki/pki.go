@@ -84,18 +84,21 @@ func (ca *CA) Pool() *x509.CertPool {
 // IssueServer signs a server leaf (ExtKeyUsageServerAuth) for the given DNS
 // names / IPs.
 func (ca *CA) IssueServer(dnsNames []string, ips []net.IP, ttl time.Duration) (certPEM, keyPEM []byte, err error) {
-	return ca.issue(&x509.Certificate{
+	certPEM, keyPEM, _, _, err = ca.issue(&x509.Certificate{
 		Subject:     pkix.Name{CommonName: "aegis-control-plane"},
 		DNSNames:    dnsNames,
 		IPAddresses: ips,
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}, ttl)
+	return certPEM, keyPEM, err
 }
 
 // IssueClient signs an edge client leaf (ExtKeyUsageClientAuth) whose CommonName
-// carries the edge identity (its UUID).
-func (ca *CA) IssueClient(commonName string, ttl time.Duration) (certPEM, keyPEM []byte, err error) {
+// carries the edge identity (its UUID). It also returns the cert's serial (as a
+// decimal string, matching x509 SerialNumber.String()) and expiry, so the caller
+// can record the current cert for rotation/revocation checks.
+func (ca *CA) IssueClient(commonName string, ttl time.Duration) (certPEM, keyPEM []byte, serial string, notAfter time.Time, err error) {
 	return ca.issue(&x509.Certificate{
 		Subject:     pkix.Name{CommonName: commonName},
 		KeyUsage:    x509.KeyUsageDigitalSignature,
@@ -103,23 +106,23 @@ func (ca *CA) IssueClient(commonName string, ttl time.Duration) (certPEM, keyPEM
 	}, ttl)
 }
 
-func (ca *CA) issue(tmpl *x509.Certificate, ttl time.Duration) (certPEM, keyPEM []byte, err error) {
+func (ca *CA) issue(tmpl *x509.Certificate, ttl time.Duration) (certPEM, keyPEM []byte, serial string, notAfter time.Time, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", time.Time{}, err
 	}
-	serial, err := randSerial()
+	sn, err := randSerial()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", time.Time{}, err
 	}
-	tmpl.SerialNumber = serial
+	tmpl.SerialNumber = sn
 	tmpl.NotBefore = time.Now().Add(-5 * time.Minute)
 	tmpl.NotAfter = time.Now().Add(ttl)
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.Cert, &key.PublicKey, ca.Key)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", time.Time{}, err
 	}
-	return encodeCert(der), encodeKey(key), nil
+	return encodeCert(der), encodeKey(key), sn.String(), tmpl.NotAfter, nil
 }
 
 func encodeCert(der []byte) []byte {

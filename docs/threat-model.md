@@ -47,8 +47,13 @@ The served `install/edge.sh` provisions a new host, so it is hardened:
   + key transit only the token-authenticated enrollment exchange.
 - The edge `systemd` unit runs least-privilege (`NoNewPrivileges`,
   `ProtectSystem=full`, only `CAP_NET_BIND_SERVICE`).
-- **Remaining hardening**: certificate rotation + revocation (CRL/short-lived
-  certs), signed binary/image distribution, and an edge revocation UI.
+- **Rotation + revocation**: the control plane records each edge's current cert
+  serial. The agent renews before expiry over its existing mTLS connection; the
+  listener rejects any cert whose serial is not the current one (rotated-out
+  certs are implicitly revoked) and any edge an admin has revoked
+  (`revoked_at`), which also drops it from the LB pool. There is no offline CRL
+  to distribute — revocation is a single DB check at the auth boundary.
+- **Remaining hardening**: signed binary/image distribution.
 
 ## Threat-feed ingestion (Phase 2)
 

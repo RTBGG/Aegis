@@ -119,6 +119,7 @@ func NewRouter(d Deps) http.Handler {
 				r.Get("/admin/edges", d.Admin.Edges)
 				r.Post("/admin/edges/{id}/weight", d.Admin.SetEdgeWeight)
 				r.Post("/admin/edges/{id}/region", d.Admin.SetEdgeRegion)
+				r.Post("/admin/edges/{id}/revoke", d.Admin.RevokeEdge)
 				r.Get("/admin/analytics", d.Admin.Analytics)
 				r.Get("/admin/blocklists", d.Admin.ListBlocklists)
 				r.Post("/admin/blocklists", d.Admin.CreateBlocklist)
@@ -148,6 +149,7 @@ func NewEdgeMTLSRouter(edge *edgeapi.API) http.Handler {
 		r.Get("/config", edge.Config)
 		r.Post("/telemetry", edge.Telemetry)
 		r.Post("/events", edge.Events)
+		r.Post("/renew-cert", edge.RenewCert)
 	})
 	return r
 }
