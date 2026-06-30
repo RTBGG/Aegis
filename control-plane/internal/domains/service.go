@@ -37,13 +37,24 @@ func isProxied(r store.DNSRecord) bool {
 	return r.Proxied && (r.Type == "A" || r.Type == "AAAA" || r.Type == "CNAME")
 }
 
-// edgeIPs returns the IPs proxied records should resolve to.
-func (s *Service) edgeIPs(ctx context.Context) []string {
-	ips, _ := s.Store.ListHealthyEdgeIPs(ctx)
-	if len(ips) == 0 {
-		return []string{s.Cfg.EdgePublicIP}
+// lbTTL is the TTL of proxied (load-balanced) records — short so weight changes
+// and edge churn propagate quickly.
+const lbTTL = 30
+
+// luaWeighted renders the PowerDNS Lua `pickwhashed` expression that splits
+// traffic across the edge pool by weight (consistent per client). It falls back
+// to the configured edge IP when no edge is eligible.
+func (s *Service) luaWeighted(edges []store.Edge) string {
+	var parts []string
+	for _, e := range edges {
+		if e.Weight > 0 {
+			parts = append(parts, fmt.Sprintf("{%d,'%s'}", e.Weight, e.PublicIP))
+		}
 	}
-	return ips
+	if len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("{100,'%s'}", s.Cfg.EdgePublicIP))
+	}
+	return fmt.Sprintf("A \"pickwhashed({%s})\"", strings.Join(parts, ","))
 }
 
 // formatContent renders a non-proxied record's content into PowerDNS wire form.
@@ -86,10 +97,15 @@ func (s *Service) syncZone(ctx context.Context, domain *store.Domain) error {
 	if err != nil {
 		return err
 	}
-	ips := s.edgeIPs(ctx)
+	edges, err := s.Store.ListHealthyEdgesForLB(ctx)
+	if err != nil {
+		return err
+	}
+	lua := s.luaWeighted(edges)
 
 	groups := map[rrKey]map[string]struct{}{}
 	ttls := map[rrKey]int{}
+	proxied := map[string]struct{}{}
 	add := func(k rrKey, ttl int, contents ...string) {
 		if groups[k] == nil {
 			groups[k] = map[string]struct{}{}
@@ -105,12 +121,21 @@ func (s *Service) syncZone(ctx context.Context, domain *store.Domain) error {
 	for _, r := range recs {
 		fqdn := dns.FQDN(domain.Name, r.Name)
 		if isProxied(r) {
-			add(rrKey{fqdn, "A"}, int(r.TTL), ips...)
+			proxied[fqdn] = struct{}{} // published as one weighted Lua record below
 		} else {
 			add(rrKey{fqdn, r.Type}, int(r.TTL), formatContent(r))
 		}
 	}
 
+	// Proxied hosts resolve to the edge pool via a weighted Lua record. Drop any
+	// stale plain A/AAAA (e.g. from before LUA publishing) so only the LUA answers.
+	for host := range proxied {
+		_ = s.DNS.DeleteRRset(ctx, domain.Name, host, "A")
+		_ = s.DNS.DeleteRRset(ctx, domain.Name, host, "AAAA")
+		if err := s.DNS.UpsertRRset(ctx, domain.Name, host, "LUA", lbTTL, []string{lua}); err != nil {
+			return err
+		}
+	}
 	for k, set := range groups {
 		contents := make([]string, 0, len(set))
 		for c := range set {
@@ -144,10 +169,11 @@ func fqdnOf(zone string, r *store.DNSRecord) string {
 	return dns.FQDN(zone, r.Name)
 }
 
-// publishedType reports the RR type a record is served as (proxied => A).
+// publishedType reports the RR type a record is served as. Proxied records are
+// published as a weighted Lua (LUA) record over the edge pool.
 func publishedType(r store.DNSRecord) string {
 	if isProxied(r) {
-		return "A"
+		return "LUA"
 	}
 	return r.Type
 }

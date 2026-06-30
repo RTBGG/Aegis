@@ -145,6 +145,7 @@ export interface Edge {
   public_ip: string;
   region: string;
   status: string;
+  weight: number;
   agent_version: string | null;
   enrolled_at: string | null;
   last_seen_at: string | null;

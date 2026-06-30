@@ -97,7 +97,7 @@ func main() {
 		Domains:   dom,
 		Security:  security.New(st, renderer),
 		Analytics: analytics.New(st, ch),
-		Admin:     admin.New(st, cfg, renderer, feeds, ml),
+		Admin:     admin.New(st, cfg, renderer, feeds, ml, dom),
 		Edge:      edgeapi.New(st, cfg, ch, geoDB, dom, ca),
 	}
 	srv := &http.Server{

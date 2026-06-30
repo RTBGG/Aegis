@@ -19,6 +19,7 @@ import (
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/auth"
 	"github.com/aegis/control-plane/internal/config"
+	"github.com/aegis/control-plane/internal/domains"
 	"github.com/aegis/control-plane/internal/mailer"
 	"github.com/aegis/control-plane/internal/store"
 	"github.com/aegis/control-plane/internal/threatfeed"
@@ -26,15 +27,16 @@ import (
 )
 
 type Service struct {
-	Store  *store.Store
-	Cfg    *appcfg.Config
-	Render *config.Renderer
-	Feeds  *threatfeed.Syncer
-	Mailer mailer.Mailer
+	Store   *store.Store
+	Cfg     *appcfg.Config
+	Render  *config.Renderer
+	Feeds   *threatfeed.Syncer
+	Mailer  mailer.Mailer
+	Domains *domains.Service
 }
 
-func New(st *store.Store, cfg *appcfg.Config, r *config.Renderer, feeds *threatfeed.Syncer, ml mailer.Mailer) *Service {
-	return &Service{Store: st, Cfg: cfg, Render: r, Feeds: feeds, Mailer: ml}
+func New(st *store.Store, cfg *appcfg.Config, r *config.Renderer, feeds *threatfeed.Syncer, ml mailer.Mailer, dom *domains.Service) *Service {
+	return &Service{Store: st, Cfg: cfg, Render: r, Feeds: feeds, Mailer: ml, Domains: dom}
 }
 
 // --- users ---
@@ -137,6 +139,37 @@ func (s *Service) Edges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"edges": edges})
+}
+
+// SetEdgeWeight updates an edge's traffic weight and re-publishes the proxied
+// DNS records so the new weighting takes effect.
+func (s *Service) SetEdgeWeight(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_id", "invalid edge id")
+		return
+	}
+	var in struct {
+		Weight int32 `json:"weight"`
+	}
+	if err := web.Decode(w, r, &in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if in.Weight < 0 || in.Weight > 1000 {
+		web.Error(w, http.StatusBadRequest, "validation", "weight must be between 0 and 1000")
+		return
+	}
+	if err := s.Store.SetEdgeWeight(r.Context(), id, in.Weight); err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not update edge")
+		return
+	}
+	actor := auth.MustUser(r.Context())
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, "admin.edge_weight", id.String(), "", map[string]any{"weight": in.Weight})
+	if s.Domains != nil {
+		_ = s.Domains.ReconcileEdges(r.Context())
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // --- global analytics ---
