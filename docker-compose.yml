@@ -32,7 +32,9 @@ services:
     restart: unless-stopped
 
   powerdns:
-    image: powerdns/pdns-auth-49:latest
+    build:
+      context: ./deploy/powerdns
+      dockerfile: Dockerfile
     depends_on:
       postgres:
         condition: service_healthy

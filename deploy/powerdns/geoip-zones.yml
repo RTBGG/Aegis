@@ -1,0 +1,3 @@
+# The geoip backend is loaded only to provide geo lookups (country/continent) to
+# Lua records served by the gpgsql backend, so it is authoritative for no zones.
+domains: []

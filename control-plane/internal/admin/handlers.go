@@ -172,6 +172,50 @@ func (s *Service) SetEdgeWeight(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// validEdgeRegions are the continent codes for GeoDNS, plus the non-geo pools.
+var validEdgeRegions = map[string]bool{
+	"AF": true, "AN": true, "AS": true, "EU": true, "NA": true, "OC": true, "SA": true,
+	"default": true, "global": true,
+}
+
+// SetEdgeRegion sets an edge's region (continent code for GeoDNS routing, or
+// "default"/"global") and re-publishes the proxied DNS records.
+func (s *Service) SetEdgeRegion(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_id", "invalid edge id")
+		return
+	}
+	var in struct {
+		Region string `json:"region"`
+	}
+	if err := web.Decode(w, r, &in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	in.Region = strings.TrimSpace(in.Region)
+	if in.Region == "" {
+		in.Region = "default"
+	}
+	if !validEdgeRegions[in.Region] && !validEdgeRegions[strings.ToUpper(in.Region)] {
+		web.Error(w, http.StatusBadRequest, "validation", "region must be a continent code (AF/AN/AS/EU/NA/OC/SA) or default")
+		return
+	}
+	if validEdgeRegions[strings.ToUpper(in.Region)] && in.Region != "default" && in.Region != "global" {
+		in.Region = strings.ToUpper(in.Region)
+	}
+	if err := s.Store.SetEdgeRegion(r.Context(), id, in.Region); err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not update edge")
+		return
+	}
+	actor := auth.MustUser(r.Context())
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, "admin.edge_region", id.String(), "", map[string]any{"region": in.Region})
+	if s.Domains != nil {
+		_ = s.Domains.ReconcileEdges(r.Context())
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "region": in.Region})
+}
+
 // --- global analytics ---
 
 func (s *Service) Analytics(w http.ResponseWriter, r *http.Request) {

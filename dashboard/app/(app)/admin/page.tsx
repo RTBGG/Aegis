@@ -123,10 +123,16 @@ function Edges() {
     await api.post(`/admin/edges/${e.id}/weight`, { weight });
     load();
   }
+  async function setRegion(e: Edge, region: string) {
+    if (region === e.region) return;
+    await api.post(`/admin/edges/${e.id}/region`, { region });
+    load();
+  }
   return (
     <Card title="Edge fleet">
       <p className="mb-3 text-sm text-slate-400">
-        Weight splits proxied traffic across the pool (DNS, sticky per client). 0 drains an edge without removing it.
+        Region routes clients to the nearest edge (GeoDNS, by continent); weight splits traffic within a pool (sticky per
+        client). Weight 0 drains an edge without removing it.
       </p>
       <table className="w-full text-sm">
         <thead className="text-left text-xs uppercase text-slate-500">
@@ -146,7 +152,19 @@ function Edges() {
             <tr key={e.id}>
               <td className="py-2 font-medium">{e.name}</td>
               <td className="font-mono">{e.public_ip}</td>
-              <td>{e.region}</td>
+              <td>
+                <select
+                  value={["AF", "AN", "AS", "EU", "NA", "OC", "SA"].includes(e.region) ? e.region : "default"}
+                  onChange={(ev) => setRegion(e, ev.target.value)}
+                  className="rounded border border-edge bg-ink/60 px-1.5 py-1 text-sm outline-none focus:border-accent"
+                >
+                  {["default", "AF", "AN", "AS", "EU", "NA", "OC", "SA"].map((rg) => (
+                    <option key={rg} value={rg}>
+                      {rg}
+                    </option>
+                  ))}
+                </select>
+              </td>
               <td>
                 <Badge tone={e.status === "healthy" ? "green" : e.status === "pending" ? "amber" : "red"}>{e.status}</Badge>
               </td>

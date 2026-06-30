@@ -14,8 +14,8 @@ lightweight node-agent. Deploys all-in-one on Debian 13 with Docker Compose.
 > threat-feed auto-blocklists, DNSSEC, audited impersonation, real SMTP, per-route
 > WAF tuning + custom SecRules, richer bot scoring + managed/CAPTCHA challenges, and
 > ClickHouse per-request analytics, and multi-node edge enrollment with per-node
-> mTLS (Phase 3). GeoDNS, cert rotation/revocation, and HA (Phase 3) plus billing
-> (deferred) remain. See `docs/architecture.md`.
+> mTLS + GeoDNS/weighted distribution (Phase 3). Cert rotation/revocation and HA
+> (Phase 3) plus billing (deferred) remain. See `docs/architecture.md`.
 
 **Topics:** `waf` · `reverse-proxy` · `dns` · `cloudflare-alternative` · `coraza` · `owasp-crs` · `caddy` · `powerdns` · `ddos-protection` · `bot-detection` · `self-hosted` · `golang` · `nextjs`
 
