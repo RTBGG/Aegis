@@ -34,6 +34,13 @@ func (s *Store) SetEdgeWeight(ctx context.Context, id uuid.UUID, weight int32) e
 	return err
 }
 
+// SetEdgeRegion updates an edge's region (a continent code for GeoDNS, or
+// "default" for the global pool).
+func (s *Store) SetEdgeRegion(ctx context.Context, id uuid.UUID, region string) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE edges SET region=$2 WHERE id=$1`, id, region)
+	return err
+}
+
 // ListHealthyEdgeIPs returns the public IPs of edges eligible to serve traffic.
 func (s *Store) ListHealthyEdgeIPs(ctx context.Context) ([]string, error) {
 	rows, err := s.Pool.Query(ctx,

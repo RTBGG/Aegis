@@ -53,8 +53,17 @@ healthy edge pool (`enable-lua-records` + `edns-subnet-processing` in
 **consistent per client** (a given resolver/subnet sticks to one edge). Each
 edge has a `weight` (0 drains it without removing it), editable in Admin → Edges;
 a change re-publishes the proxied records (`ReconcileEdges`). Enrolled edges join
-the pool automatically. (Per-query GeoDNS by client location is the next step —
-it adds the PowerDNS geoip backend + a country database.)
+the pool automatically.
+
+**GeoDNS** layers on top: an edge's `region` can be a continent code (EU, NA,
+AS, …). When any edge is continent-tagged, `luaWeighted` emits
+`;if(continent('EU')) then return pickwhashed({EU edges}) end … return
+pickwhashed({all})`, so a client is routed to the weighted pool of edges on its
+continent, falling back to the global pool. PowerDNS resolves the client's
+continent via the **geoip backend** + a bundled free country MMDB (DB-IP Lite,
+CC BY) — see `deploy/powerdns/Dockerfile` and `pdns.conf` (`launch=gpgsql,geoip`,
+`edns-subnet-processing`). With no continent-tagged edges this degrades to pure
+weighted selection.
 
 ## DNSSEC (Phase 2)
 
@@ -206,10 +215,9 @@ global blocklist, separate from the operator-managed `blocklists` table.
   audited admin impersonation, real SMTP email, per-route WAF tuning + custom
   SecRules import, richer bot scoring + managed/CAPTCHA challenges, and
   ClickHouse per-request analytics.
-- P3: multi-node edge enrollment, per-node mTLS, and weighted edge distribution
-  are **built** (see below); remaining: per-query GeoDNS by client location
-  (geoip backend + DB), cert rotation + revocation (CRL), signed image
-  distribution, HA control plane, anycast option.
+- P3: multi-node edge enrollment, per-node mTLS, and weighted + GeoDNS edge
+  distribution are **built** (see below); remaining: cert rotation + revocation
+  (CRL), signed image distribution, HA control plane, anycast option.
 
 ## Multi-node edge enrollment (Phase 3)
 

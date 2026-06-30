@@ -154,6 +154,18 @@ shared edge Coraza engine — a sensitive surface:
   plane). No visitor IP is ever sent to a third-party geo service; the only
   egress is the periodic database download. Disable with `GEOIP_ENABLED=off`.
 
+## GeoDNS (Phase 3)
+
+- Client→continent resolution runs **locally** in PowerDNS via the geoip backend
+  against a bundled free country MMDB (DB-IP Lite, CC BY 4.0); no client IP is
+  sent to a third-party geo service. The DB is refreshed by rebuilding the
+  PowerDNS image (or mounting your own `/etc/powerdns/geoip/country.mmdb`).
+- Geo routing follows EDNS Client Subnet when present (`edns-subnet-processing`),
+  else the resolver's source IP — both are approximate and not a security
+  control; WAF/rate-limit/blocklists still apply regardless of which edge serves.
+- The geoip backend is authoritative for no zones (`geoip-zones.yml` is empty);
+  it only provides `country()`/`continent()` to the Lua records gpgsql serves.
+
 ## Known Phase 1 limitations (hardening backlog)
 
 - Enrolled edges authenticate with per-node **mTLS** (or a durable per-node

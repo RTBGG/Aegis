@@ -41,10 +41,12 @@ func isProxied(r store.DNSRecord) bool {
 // and edge churn propagate quickly.
 const lbTTL = 30
 
-// luaWeighted renders the PowerDNS Lua `pickwhashed` expression that splits
-// traffic across the edge pool by weight (consistent per client). It falls back
-// to the configured edge IP when no edge is eligible.
-func (s *Service) luaWeighted(edges []store.Edge) string {
+// continents are the ISO continent codes usable as an edge region for GeoDNS.
+var continents = map[string]bool{"AF": true, "AN": true, "AS": true, "EU": true, "NA": true, "OC": true, "SA": true}
+
+// weightTable renders a pickwhashed `{{weight,'ip'},…}` table for a set of edges,
+// or the configured fallback edge when none are eligible.
+func (s *Service) weightTable(edges []store.Edge) string {
 	var parts []string
 	for _, e := range edges {
 		if e.Weight > 0 {
@@ -54,7 +56,40 @@ func (s *Service) luaWeighted(edges []store.Edge) string {
 	if len(parts) == 0 {
 		parts = append(parts, fmt.Sprintf("{100,'%s'}", s.Cfg.EdgePublicIP))
 	}
-	return fmt.Sprintf("A \"pickwhashed({%s})\"", strings.Join(parts, ","))
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+// luaWeighted renders the proxied record's Lua selector: GeoDNS (clients are
+// routed to edges whose region matches their continent) layered over weighted,
+// sticky-per-client distribution (`pickwhashed`), falling back to the global
+// pool. With no continent-tagged edges it degrades to pure weighted selection.
+func (s *Service) luaWeighted(edges []store.Edge) string {
+	byCont := map[string][]store.Edge{}
+	var order []string
+	for _, e := range edges {
+		if e.Weight <= 0 {
+			continue
+		}
+		r := strings.ToUpper(strings.TrimSpace(e.Region))
+		if continents[r] {
+			if _, ok := byCont[r]; !ok {
+				order = append(order, r)
+			}
+			byCont[r] = append(byCont[r], e)
+		}
+	}
+	global := s.weightTable(edges)
+	if len(order) == 0 {
+		return fmt.Sprintf("A \"pickwhashed(%s)\"", global)
+	}
+	sort.Strings(order)
+	var b strings.Builder
+	b.WriteString(";")
+	for _, c := range order {
+		fmt.Fprintf(&b, "if(continent('%s')) then return pickwhashed(%s) end ", c, s.weightTable(byCont[c]))
+	}
+	fmt.Fprintf(&b, "return pickwhashed(%s)", global)
+	return fmt.Sprintf("A \"%s\"", b.String())
 }
 
 // formatContent renders a non-proxied record's content into PowerDNS wire form.

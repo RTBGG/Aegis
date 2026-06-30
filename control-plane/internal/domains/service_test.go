@@ -28,3 +28,19 @@ func TestLuaWeighted(t *testing.T) {
 		t.Fatalf("fallback: got %s", got)
 	}
 }
+
+func TestLuaWeighted_GeoDNS(t *testing.T) {
+	s := &Service{Cfg: &appcfg.Config{EdgePublicIP: "127.0.0.1"}}
+	got := s.luaWeighted([]store.Edge{
+		{PublicIP: "10.0.0.1", Weight: 100, Region: "EU"},
+		{PublicIP: "10.0.0.2", Weight: 100, Region: "NA"},
+		{PublicIP: "10.0.0.3", Weight: 100, Region: "default"},
+	})
+	want := `A ";` +
+		`if(continent('EU')) then return pickwhashed({{100,'10.0.0.1'}}) end ` +
+		`if(continent('NA')) then return pickwhashed({{100,'10.0.0.2'}}) end ` +
+		`return pickwhashed({{100,'10.0.0.1'},{100,'10.0.0.2'},{100,'10.0.0.3'}})"`
+	if got != want {
+		t.Fatalf("geo lua mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
