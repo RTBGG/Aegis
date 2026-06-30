@@ -39,10 +39,16 @@ The served `install/edge.sh` provisions a new host, so it is hardened:
   HTTPS exchange.
 - Telemetry/metrics are attributed to the **authenticated** edge, so a node
   cannot spoof another's identity via the self-reported name.
+- **Per-node mTLS**: enrollment also issues a client certificate (CN = edge id)
+  from a control-plane CA (persisted in `pki`, generated on first boot). A
+  dedicated listener serves the edge API with `RequireAndVerifyClientCert`; the
+  edge identity comes from the verified cert, giving each node a cryptographic,
+  rotatable identity rather than a shared bearer secret. The 90-day client cert
+  + key transit only the token-authenticated enrollment exchange.
 - The edge `systemd` unit runs least-privilege (`NoNewPrivileges`,
   `ProtectSystem=full`, only `CAP_NET_BIND_SERVICE`).
-- **Remaining hardening**: per-node **mTLS** (replacing the bearer token), signed
-  binary/image distribution, and edge revocation UI.
+- **Remaining hardening**: certificate rotation + revocation (CRL/short-lived
+  certs), signed binary/image distribution, and an edge revocation UI.
 
 ## Threat-feed ingestion (Phase 2)
 
@@ -150,9 +156,9 @@ shared edge Coraza engine — a sensitive surface:
 
 ## Known Phase 1 limitations (hardening backlog)
 
-- Enrolled edges authenticate with a durable per-node bearer token; the
-  all-in-one local edge still uses the shared token. Per-node mTLS is the next
-  hardening step (P3).
+- Enrolled edges authenticate with per-node **mTLS** (or a durable per-node
+  bearer token); the all-in-one local edge still uses the shared token.
+  Certificate rotation/revocation (CRL) is the next hardening step.
 - The Caddy admin API is bound to `127.0.0.1` and the agent is co-located in the
   edge container so it is never network-exposed.
 - WAF block counts aren't yet attributed per-domain in telemetry (global

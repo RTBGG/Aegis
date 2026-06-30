@@ -4,6 +4,10 @@
 package agent
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -12,7 +16,7 @@ import (
 const Version = "0.1.0-phase1"
 
 type Config struct {
-	ControlPlaneURL   string // internal API base, e.g. http://api:8080
+	ControlPlaneURL   string // edge API base; the mTLS URL when enrolled with certs
 	AgentToken        string
 	EdgeName          string
 	PublicIP          string
@@ -22,6 +26,13 @@ type Config struct {
 	CaddyAdmin        string
 	RedisAddr         string
 	TelemetryInterval time.Duration
+
+	// mTLS (post-enrollment): per-node client cert/key + CA. When all three are
+	// present the agent talks to the control plane over mutual TLS.
+	CertFile  string
+	KeyFile   string
+	CAFile    string
+	transport *http.Transport
 }
 
 func env(key, def string) string {
@@ -32,7 +43,7 @@ func env(key, def string) string {
 }
 
 func LoadConfig() Config {
-	return Config{
+	c := Config{
 		ControlPlaneURL:   env("CONTROL_PLANE_URL", "http://api:8080"),
 		AgentToken:        os.Getenv("AGENT_TOKEN"),
 		EdgeName:          env("EDGE_NAME", "local-edge"),
@@ -43,7 +54,41 @@ func LoadConfig() Config {
 		CaddyAdmin:        env("CADDY_ADMIN", "127.0.0.1:2019"),
 		RedisAddr:         env("AEGIS_REDIS", "redis:6379"),
 		TelemetryInterval: 15 * time.Second,
+		CertFile:          os.Getenv("EDGE_CERT_FILE"),
+		KeyFile:           os.Getenv("EDGE_KEY_FILE"),
+		CAFile:            os.Getenv("EDGE_CA_FILE"),
 	}
+	c.transport = buildTransport(c)
+	return c
+}
+
+// buildTransport returns an mTLS HTTP transport when per-node certs are
+// configured and loadable; otherwise nil (the default transport is used).
+func buildTransport(c Config) *http.Transport {
+	if c.CertFile == "" || c.KeyFile == "" || c.CAFile == "" {
+		return nil
+	}
+	cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
+	if err != nil {
+		slog.Warn("mtls: load client keypair failed; using plain transport", "err", err)
+		return nil
+	}
+	caPEM, err := os.ReadFile(c.CAFile)
+	if err != nil {
+		slog.Warn("mtls: read CA failed; using plain transport", "err", err)
+		return nil
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		slog.Warn("mtls: no certs in CA file; using plain transport")
+		return nil
+	}
+	slog.Info("edge mTLS enabled", "cert", c.CertFile)
+	return &http.Transport{TLSClientConfig: &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		RootCAs:      pool,
+		MinVersion:   tls.VersionTLS12,
+	}}
 }
 
 func (c Config) dynamicFile() string {

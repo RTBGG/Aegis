@@ -18,7 +18,7 @@ type bundle struct {
 }
 
 func (c Config) authedClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout}
+	return &http.Client{Timeout: timeout, Transport: c.transport}
 }
 
 // fetchConfig long-polls the control plane for config newer than `since`.

@@ -193,9 +193,9 @@ global blocklist, separate from the operator-managed `blocklists` table.
   audited admin impersonation, real SMTP email, per-route WAF tuning + custom
   SecRules import, richer bot scoring + managed/CAPTCHA challenges, and
   ClickHouse per-request analytics.
-- P3: multi-node edge enrollment is **built** (see below); remaining: per-node
-  mTLS PKI + cert rotation, GeoDNS/weighted edge distribution, HA control plane,
-  anycast option.
+- P3: multi-node edge enrollment + per-node mTLS are **built** (see below);
+  remaining: cert rotation + revocation (CRL), signed image distribution,
+  GeoDNS/weighted edge distribution, HA control plane, anycast option.
 
 ## Multi-node edge enrollment (Phase 3)
 
@@ -220,5 +220,16 @@ curl -fsSL https://cp.example.com/install/edge.sh | sudo ENROLL_TOKEN=xxxx bash
    (`domains.ReconcileEdges`) so the new edge's IP immediately enters the
    PowerDNS rotation and the origin LB pools.
 
-Per-node **mTLS** (replacing the bearer token) and signed binary distribution
-are the remaining hardening steps.
+### Per-node mTLS
+
+Enrollment also issues each edge a **client certificate** (`internal/pki`): the
+control plane runs a small ECDSA CA (persisted in the `pki` table, generated on
+first boot) and signs a leaf with the edge's UUID as CommonName. The enroll
+response carries the cert, key and CA (base64 PEM); `edge.sh` installs them.
+
+A dedicated TLS listener (`MTLS_PORT`, default 8443) serves the edge API with
+`RequireAndVerifyClientCert` against the CA. The edge identity is taken from the
+verified cert's CN — no bearer token, no name spoofing. The node-agent uses the
+client cert + CA to dial `control_plane_mtls_url`; the all-in-one local edge
+keeps using the bearer channel. Signed binary/image distribution, cert rotation
+and a CRL/revocation path are the remaining hardening steps.

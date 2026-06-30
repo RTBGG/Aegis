@@ -61,15 +61,29 @@ jget(){ sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" /tmp/aegis-enroll.json; }
 AGENT_TOKEN="$(jget agent_token)"
 EDGE_NAME="$(jget name)"
 CHALLENGE_SECRET="$(jget challenge_secret)"
+MTLS_URL="$(jget control_plane_mtls_url)"
+CERT_B64="$(jget cert_b64)"; KEY_B64="$(jget key_b64)"; CA_B64="$(jget ca_b64)"
 [ -n "$AGENT_TOKEN" ] || { red "enroll response missing agent_token"; exit 1; }
 rm -f /tmp/aegis-enroll.json
 grn "Enrolled as '${EDGE_NAME}'."
 
+# --- install per-node mTLS certs (if issued) and pick the edge API endpoint ---
+mkdir -p "$CONF_DIR"; umask 077
+EDGE_URL="${CONTROL_PLANE}"
+MTLS_ENV=""
+if [ -n "$CERT_B64" ] && [ -n "$KEY_B64" ] && [ -n "$CA_B64" ] && [ -n "$MTLS_URL" ]; then
+  printf '%s' "$CERT_B64" | base64 -d > "${CONF_DIR}/edge.crt"
+  printf '%s' "$KEY_B64"  | base64 -d > "${CONF_DIR}/edge.key"
+  printf '%s' "$CA_B64"   | base64 -d > "${CONF_DIR}/ca.crt"
+  chmod 600 "${CONF_DIR}/edge.key"
+  EDGE_URL="$MTLS_URL"
+  MTLS_ENV=$'EDGE_CERT_FILE=/etc/aegis/edge.crt\nEDGE_KEY_FILE=/etc/aegis/edge.key\nEDGE_CA_FILE=/etc/aegis/ca.crt'
+  grn "Per-node mTLS certificate installed."
+fi
+
 # --- write edge config + compose, then start ---
-mkdir -p "$CONF_DIR"
-umask 077
 cat > "${CONF_DIR}/edge.env" <<EOF
-CONTROL_PLANE_URL=${CONTROL_PLANE}
+CONTROL_PLANE_URL=${EDGE_URL}
 AGENT_TOKEN=${AGENT_TOKEN}
 EDGE_NAME=${EDGE_NAME}
 EDGE_PUBLIC_IP=${PUBLIC_IP}
@@ -77,6 +91,7 @@ CHALLENGE_SECRET=${CHALLENGE_SECRET}
 AEGIS_REDIS=redis:6379
 EDGE_TLS_MODE=acme
 ACME_EMAIL=${ACME_EMAIL:-admin@${EDGE_NAME}}
+${MTLS_ENV}
 EOF
 
 cat > "${CONF_DIR}/docker-compose.yml" <<EOF
@@ -92,6 +107,7 @@ services:
     depends_on: [redis]
     ports: ["80:80","443:443"]
     volumes:
+      - ${CONF_DIR}:/etc/aegis:ro
       - caddydata:/data
       - caddyconfig:/config
     restart: unless-stopped
