@@ -22,8 +22,10 @@
 
 # Control-plane site (dashboard + API). All-in-one deployments only; on real
 # edge nodes CONTROL_PLANE_HOST is unset and this block is skipped by Caddy.
+# CP_TLS is "internal" (self-signed, default) or an email address to obtain a
+# trusted cert via ACME for a real CONTROL_PLANE_HOST.
 {$CONTROL_PLANE_HOST:localhost} {
-	tls internal
+	tls {$CP_TLS:internal}
 
 	handle /api/* {
 		reverse_proxy {$CP_API_UPSTREAM:api:8080}
