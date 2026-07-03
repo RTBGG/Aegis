@@ -34,10 +34,50 @@ grn "Docker $(docker --version)"
 
 # --- .env with generated secrets ---
 if [ ! -f .env ]; then
-  grn "Generating .env with random secrets…"
+  # Domain the dashboard/API is served on (replaces the cp.localtest.me default).
+  # Override non-interactively with AEGIS_DOMAIN=… (and optionally AEGIS_ACME_EMAIL=…).
+  DEFAULT_DOMAIN="cp.localtest.me"
+  DOMAIN="${AEGIS_DOMAIN:-}"
+  if [ -z "$DOMAIN" ] && [ -t 0 ]; then
+    printf 'Domain for the Aegis dashboard/API (must resolve to this host) [%s]: ' "$DEFAULT_DOMAIN"
+    read -r DOMAIN || true
+  fi
+  DOMAIN="$(printf '%s' "${DOMAIN:-$DEFAULT_DOMAIN}" | tr 'A-Z' 'a-z' | tr -d '[:space:]')"
+  if ! printf '%s' "$DOMAIN" | grep -qE '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'; then
+    red "'${DOMAIN}' is not a valid domain; using ${DEFAULT_DOMAIN}."
+    DOMAIN="$DEFAULT_DOMAIN"
+  fi
+
+  grn "Generating .env with random secrets for https://${DOMAIN} …"
   cp .env.example .env
   gen(){ openssl rand -hex 32; }
   set_kv(){ sed -i "s|^$1=.*|$1=$2|" .env; }
+
+  # Point every dashboard/API URL at the chosen domain.
+  set_kv CONTROL_PLANE_URL "https://${DOMAIN}"
+  set_kv DASHBOARD_URL "https://${DOMAIN}"
+  set_kv CONTROL_PLANE_HOST "${DOMAIN}"
+  set_kv NEXT_PUBLIC_API_URL "https://${DOMAIN}"
+
+  # A real (non-localtest) domain gets a trusted cert via ACME/Let's Encrypt;
+  # localtest.me / localhost keep the self-signed internal CA (no public DNS).
+  case "$DOMAIN" in
+    *.localtest.me | localhost)
+      grn "TLS: self-signed internal CA (fine for ${DOMAIN})." ;;
+    *)
+      ACME_EMAIL_DEF="admin@${DOMAIN}"
+      ACME_EMAIL="${AEGIS_ACME_EMAIL:-}"
+      if [ -z "$ACME_EMAIL" ] && [ -t 0 ]; then
+        printf "Email for ACME/Let's Encrypt certificates [%s]: " "$ACME_EMAIL_DEF"
+        read -r ACME_EMAIL || true
+      fi
+      ACME_EMAIL="${ACME_EMAIL:-$ACME_EMAIL_DEF}"
+      set_kv EDGE_TLS_MODE "acme"
+      set_kv ACME_EMAIL "$ACME_EMAIL"
+      set_kv CP_TLS "$ACME_EMAIL"
+      grn "TLS: ACME (Let's Encrypt) for ${DOMAIN}. Point ${DOMAIN} at this host and open ports 80/443." ;;
+  esac
+
   set_kv SESSION_SECRET "$(gen)"
   set_kv CSRF_SECRET "$(gen)"
   set_kv CHALLENGE_SECRET "$(gen)"

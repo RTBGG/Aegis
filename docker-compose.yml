@@ -113,6 +113,7 @@ services:
       CHALLENGE_SECRET: ${CHALLENGE_SECRET}
       ACME_EMAIL: ${ACME_EMAIL}
       CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-cp.localtest.me}
+      CP_TLS: ${CP_TLS:-internal}
       CP_API_UPSTREAM: api:8080
       CP_DASH_UPSTREAM: dashboard:3000
     depends_on:

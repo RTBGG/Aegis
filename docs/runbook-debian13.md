@@ -12,6 +12,14 @@ docker compose ps        # wait until api/postgres/redis are healthy
 
 First build is slow (xcaddy compiles Caddy + Coraza + CRS). Subsequent builds are cached.
 
+The installer **asks which domain** to serve the dashboard/API on (default
+`cp.localtest.me`). Enter a real domain (e.g. `cp.example.com`) and it wires
+`CONTROL_PLANE_URL`/`HOST`, `DASHBOARD_URL`, `NEXT_PUBLIC_API_URL` to it and
+switches TLS to **ACME/Let's Encrypt** (so browsers get a trusted cert) — point
+the domain's DNS at this host and open ports 80/443 first. `*.localtest.me`
+keeps the self-signed internal CA. Run non-interactively with
+`sudo AEGIS_DOMAIN=cp.example.com AEGIS_ACME_EMAIL=you@example.com bash deploy/debian13/install-control-plane.sh`.
+
 The installer prints the generated **admin password** — save it. The admin email is `BOOTSTRAP_ADMIN_EMAIL` in `.env` (`admin@example.com` by default).
 
 ## 2. Reach the dashboard
@@ -71,8 +79,10 @@ docker compose exec api /app/migrate   # re-run migrations manually
   verification auto-passes; click *Verify* (or `POST /domains/{id}/verify`).
 - **Cert errors**: expected with the internal CA; use `-k` or import the Caddy root from the
   `caddydata` volume.
-- **Switch to real certs**: set `EDGE_TLS_MODE=acme` + a real domain delegated to the edge with
-  ports 80/443 publicly reachable.
+- **Switch to real certs**: the installer does this when you give it a real domain. Manually:
+  set `CP_TLS=<you@example.com>` (dashboard/API cert) and `EDGE_TLS_MODE=acme` (customer-domain
+  certs), with the domains resolving to this host and ports 80/443 publicly reachable, then
+  `docker compose up -d`.
 
 ## 5. Reset
 
