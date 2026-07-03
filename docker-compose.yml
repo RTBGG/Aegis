@@ -45,7 +45,7 @@ services:
       - "--gpgsql-user=${PDNS_DB_USER}"
       - "--gpgsql-password=${PDNS_DB_PASSWORD}"
       - "--api-key=${PDNS_API_KEY}"
-      - "--default-soa-content=${ASSIGNED_NS1} hostmaster.${ASSIGNED_NS1} 0 10800 3600 604800 3600"
+      - "--default-soa-content=${ASSIGNED_NS1:-ns1.localhost} hostmaster.${ASSIGNED_NS1:-ns1.localhost} 0 10800 3600 604800 3600"
     ports:
       - "5300:53/udp"
       - "5300:53/tcp"

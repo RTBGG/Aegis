@@ -100,7 +100,6 @@ func Load() (*Config, error) {
 		AgentToken:      os.Getenv("AGENT_TOKEN"),
 		PDNSAPIURL:      env("PDNS_API_URL", "http://powerdns:8081"),
 		PDNSAPIKey:      os.Getenv("PDNS_API_KEY"),
-		AssignedNS:      [2]string{env("ASSIGNED_NS1", "ns1.aegis.example"), env("ASSIGNED_NS2", "ns2.aegis.example")},
 		EdgePublicIP:    env("EDGE_PUBLIC_IP", "127.0.0.1"),
 		EdgeTLSMode:     env("EDGE_TLS_MODE", "internal"),
 		ACMEEmail:       env("ACME_EMAIL", "admin@example.com"),
@@ -157,6 +156,12 @@ func Load() (*Config, error) {
 
 	// Derive mTLS server SANs + the URL edges dial from the control-plane host.
 	cpHost := hostOf(c.ControlPlaneURL)
+
+	// Default the authoritative nameservers to ns1/ns2 of the control-plane
+	// domain (a leading "cp." is stripped, so cp.rtb.st and rtb.st both yield
+	// ns1.rtb.st / ns2.rtb.st). Override explicitly with ASSIGNED_NS1/NS2.
+	dns1, dns2 := nameserverDefaults(cpHost)
+	c.AssignedNS = [2]string{env("ASSIGNED_NS1", dns1), env("ASSIGNED_NS2", dns2)}
 	if names := os.Getenv("MTLS_SERVER_NAMES"); names != "" {
 		for _, n := range strings.Split(names, ",") {
 			if n = strings.TrimSpace(n); n != "" {
@@ -168,6 +173,14 @@ func Load() (*Config, error) {
 	}
 	c.ControlPlaneMTLSURL = env("MTLS_PUBLIC_URL", "https://"+cpHost+":"+c.MTLSPort)
 	return c, nil
+}
+
+// nameserverDefaults returns the default authoritative nameserver hostnames for
+// a control-plane host: ns1/ns2 of that domain, with a leading "cp." stripped so
+// cp.rtb.st and rtb.st both yield ns1.rtb.st / ns2.rtb.st.
+func nameserverDefaults(cpHost string) (string, string) {
+	base := strings.TrimPrefix(cpHost, "cp.")
+	return "ns1." + base, "ns2." + base
 }
 
 // hostOf extracts the hostname from a URL, falling back to "localhost".
