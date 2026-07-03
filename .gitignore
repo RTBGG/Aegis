@@ -3,6 +3,9 @@
 *.local
 secrets/
 
+# DB backups written by deploy/debian13/update.sh
+backups/
+
 # Go
 /control-plane/bin/
 /node-agent/bin/

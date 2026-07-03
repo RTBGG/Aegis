@@ -84,7 +84,34 @@ docker compose exec api /app/migrate   # re-run migrations manually
   certs), with the domains resolving to this host and ports 80/443 publicly reachable, then
   `docker compose up -d`.
 
-## 5. Reset
+## 5. Update an existing install
+
+From the repo directory you installed into:
+
+```bash
+sudo bash deploy/debian13/update.sh    # or: make update
+```
+
+It fast-forwards the checkout (`git pull`), backs up Postgres to `./backups/`,
+warns about any new `.env.example` keys your `.env` doesn't set, then rebuilds and
+restarts the stack. **Migrations run automatically** when the `api` container
+starts; your `.env` and the data volumes (Postgres, ClickHouse, Caddy certs) are
+preserved. The first rebuild after an edge/agent change recompiles Caddy via
+`xcaddy` and is slow.
+
+Toggles: `AEGIS_SKIP_PULL=1` (manage git yourself), `AEGIS_SKIP_BACKUP=1` (skip the
+dump), `AEGIS_BACKUP_DIR=<dir>`.
+
+- **New `.env` keys**: the script lists settings added to `.env.example` since your
+  install. They fall back to defaults; add the ones you want and re-run.
+- **Nameservers still on the old value**: older `.env` files pinned `ASSIGNED_NS1/2`.
+  The app now derives `ns1/ns2.<your-registrable-domain>` when they're unset — comment
+  those lines out to adopt it, or leave them to keep an explicit override.
+- **Rollback**: it's a git checkout — `git checkout <prev-tag>` then `make update`
+  (`AEGIS_SKIP_PULL=1`). Migrations are forward-only, so restore the `pg_dump` if a
+  rollback crosses a schema change.
+
+## 6. Reset
 
 ```bash
 docker compose down -v    # removes volumes (Postgres, Caddy data) — destroys all state

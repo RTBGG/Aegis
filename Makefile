@@ -26,6 +26,10 @@ up: env ## Build + start the all-in-one stack
 down: ## Stop the stack
 	$(COMPOSE) down
 
+.PHONY: update
+update: ## Update in place: pull, back up the DB, warn on new .env keys, rebuild
+	bash deploy/debian13/update.sh
+
 .PHONY: nuke
 nuke: ## Stop the stack and delete volumes (DESTRUCTIVE)
 	$(COMPOSE) down -v
