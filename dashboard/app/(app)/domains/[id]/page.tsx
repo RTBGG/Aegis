@@ -10,15 +10,30 @@ const TAB_LABEL: Record<Tab, string> = { dns: "DNS", dnssec: "DNSSEC", security:
 const RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT", "MX"];
 const canProxy = (t: string) => ["A", "AAAA", "CNAME"].includes(t);
 
+interface DomainDetailResp {
+  domain: Domain;
+  nameservers: string[];
+  verification: { txt_name: string; txt_value: string };
+}
+
 export default function DomainDetail() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [domain, setDomain] = useState<Domain | null>(null);
+  const [nameservers, setNameservers] = useState<string[]>([]);
+  const [verification, setVerification] = useState<{ txt_name: string; txt_value: string } | null>(null);
   const [tab, setTab] = useState<Tab>("dns");
   const [msg, setMsg] = useState("");
 
   function loadDomain() {
-    api.get<{ domain: Domain }>(`/domains/${id}`).then((r) => setDomain(r.domain)).catch(() => {});
+    api
+      .get<DomainDetailResp>(`/domains/${id}`)
+      .then((r) => {
+        setDomain(r.domain);
+        setNameservers(r.nameservers ?? []);
+        setVerification(r.verification ?? null);
+      })
+      .catch(() => {});
   }
   useEffect(loadDomain, [id]);
 
@@ -52,7 +67,6 @@ export default function DomainDetail() {
           </div>
         </div>
         <div className="flex gap-2">
-          {domain.status !== "active" && <Button onClick={verify}>Verify</Button>}
           <Button variant="ghost" onClick={togglePause}>
             {domain.paused ? "Resume" : "Pause"}
           </Button>
@@ -61,7 +75,38 @@ export default function DomainDetail() {
           </Button>
         </div>
       </div>
-      {msg && <p className="text-sm text-slate-300">{msg}</p>}
+
+      {domain.status !== "active" && (
+        <Card title="Domain verification">
+          <div className="space-y-4 text-sm">
+            <p className="text-slate-400">
+              This domain isn&apos;t verified yet. Use <span className="text-slate-200">either</span> option below, then click
+              Verify.
+            </p>
+            <div>
+              <div className="mb-1 text-xs uppercase text-slate-500">Option 1 — delegate nameservers</div>
+              <p className="mb-2 text-slate-400">Set these as the domain&apos;s nameservers at your registrar:</p>
+              <ul className="font-mono text-accent">
+                {nameservers.map((ns) => (
+                  <li key={ns}>{ns}</li>
+                ))}
+              </ul>
+            </div>
+            {verification && (
+              <div>
+                <div className="mb-1 text-xs uppercase text-slate-500">Option 2 — add a TXT record</div>
+                <pre className="overflow-x-auto rounded-lg border border-edge bg-black/40 p-3 text-xs text-slate-300">
+                  {`${verification.txt_name}  TXT  ${verification.txt_value}`}
+                </pre>
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <Button onClick={verify}>Verify</Button>
+              {msg && <span className="text-slate-300">{msg}</span>}
+            </div>
+          </div>
+        </Card>
+      )}
 
       <div className="flex gap-1 border-b border-edge">
         {(["dns", "dnssec", "security", "analytics"] as Tab[]).map((t) => (

@@ -104,6 +104,10 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{
 		"domain":      toDomainDTO(d),
 		"nameservers": []string{s.Cfg.AssignedNS[0], s.Cfg.AssignedNS[1]},
+		"verification": map[string]string{
+			"txt_name":  "_aegis-challenge." + d.Name,
+			"txt_value": d.VerificationToken,
+		},
 	})
 }
 
