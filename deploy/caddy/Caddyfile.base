@@ -24,12 +24,15 @@
 # edge nodes CONTROL_PLANE_HOST is unset and this block is skipped by Caddy.
 # CP_TLS is "internal" (self-signed, default) or an email address to obtain a
 # trusted cert via ACME for a real CONTROL_PLANE_HOST.
+#
+# The dashboard/API gets the same edge protections as onboarded domains
+# (JA4 fingerprinting, per-IP rate limiting, bot scoring, Coraza/OWASP-CRS WAF),
+# tunable via CP_* env. Endpoints hit by non-browser clients — the edge agents
+# (/edge/*), the enrollment script served over /install/*, and /healthz — bypass
+# the bot/WAF handling so they are never challenged or blocked.
 {$CONTROL_PLANE_HOST:localhost} {
 	tls {$CP_TLS:internal}
 
-	handle /api/* {
-		reverse_proxy {$CP_API_UPSTREAM:api:8080}
-	}
 	handle /edge/* {
 		reverse_proxy {$CP_API_UPSTREAM:api:8080}
 	}
@@ -39,8 +42,45 @@
 	handle /healthz {
 		reverse_proxy {$CP_API_UPSTREAM:api:8080}
 	}
+
 	handle {
-		reverse_proxy {$CP_DASH_UPSTREAM:dashboard:3000}
+		# TLS/HTTP fingerprint (also feeds analytics + bot scoring).
+		ja4
+
+		# Per-source-IP request cap (uses the real client IP, not a spoofable
+		# X-Forwarded-For). CP_RATE_LIMIT_RPM requests per minute, then 429.
+		rate_limit {
+			zone control_plane {
+				key {http.request.remote_ip}
+				events {$CP_RATE_LIMIT_RPM:1200}
+				window 1m
+			}
+		}
+
+		# Behavioural bot scoring (blocks obvious automation; no interactive
+		# challenge so legitimate admins are never interrupted).
+		botscore {
+			sensitivity {$CP_BOT_SENSITIVITY:low}
+		}
+
+		# Coraza + OWASP CRS. Defaults to DetectionOnly so the in-dashboard
+		# WAF-rule editor (which legitimately posts SecLang) is not blocked;
+		# set CP_WAF_ENGINE=On to actively block attacks on the dashboard/API.
+		coraza_waf {
+			directives `
+				Include /etc/caddy/coraza/coraza.conf
+				Include /etc/caddy/coraza/crs-setup.conf
+				Include /etc/caddy/coraza/rules/*.conf
+				SecRuleEngine {$CP_WAF_ENGINE:DetectionOnly}
+			`
+		}
+
+		handle /api/* {
+			reverse_proxy {$CP_API_UPSTREAM:api:8080}
+		}
+		handle {
+			reverse_proxy {$CP_DASH_UPSTREAM:dashboard:3000}
+		}
 	}
 }
 

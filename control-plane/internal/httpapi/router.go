@@ -67,10 +67,11 @@ func NewRouter(d Deps) http.Handler {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
-		// Unauthenticated auth endpoints (no session yet => no CSRF).
+		// Unauthenticated auth endpoints (no session yet => no CSRF). Login and
+		// MFA are per-IP throttled to blunt brute-force / credential stuffing.
 		r.Post("/auth/signup", d.Auth.Signup)
-		r.Post("/auth/login", d.Auth.Login)
-		r.Post("/auth/mfa", d.Auth.MFAVerifyLogin)
+		r.With(d.Auth.RateLimitAuth).Post("/auth/login", d.Auth.Login)
+		r.With(d.Auth.RateLimitAuth).Post("/auth/mfa", d.Auth.MFAVerifyLogin)
 		r.Post("/auth/verify-email", d.Auth.VerifyEmail)
 
 		// Authenticated, CSRF-protected.
