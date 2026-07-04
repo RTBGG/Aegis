@@ -120,6 +120,8 @@ func NewRouter(d Deps) http.Handler {
 			// Admin-only.
 			r.Group(func(r chi.Router) {
 				r.Use(auth.RequireRole("admin", "superadmin"))
+				r.Get("/admin/under-attack", d.Admin.UnderAttack)
+				r.Post("/admin/under-attack", d.Admin.SetUnderAttack)
 				r.Get("/admin/users", d.Admin.Users)
 				r.Post("/admin/users/{userID}/status", d.Admin.SetUserStatus)
 				r.Post("/admin/users/{userID}/impersonate", d.Auth.ImpersonateStart)

@@ -130,6 +130,51 @@ func (s *Service) ImpersonationLog(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"entries": out})
 }
 
+// --- under attack mode (dashboard PoW challenge, toggled live) ---
+
+// underAttackKey is the Redis flag the edge's challenge module reads live to
+// switch dashboard "under attack" proof-of-work mode on/off without a reload.
+const underAttackKey = "aegis:under_attack"
+
+// UnderAttack reports whether dashboard "under attack" mode is currently on.
+func (s *Service) UnderAttack(w http.ResponseWriter, r *http.Request) {
+	n, err := s.Store.Redis.Exists(r.Context(), underAttackKey).Result()
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not read state")
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"enabled": n > 0})
+}
+
+// SetUnderAttack toggles dashboard "under attack" mode. The edge picks up the
+// change within a couple of seconds — no restart needed.
+func (s *Service) SetUnderAttack(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := web.Decode(w, r, &in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	var err error
+	if in.Enabled {
+		err = s.Store.Redis.Set(r.Context(), underAttackKey, "1", 0).Err()
+	} else {
+		err = s.Store.Redis.Del(r.Context(), underAttackKey).Err()
+	}
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not update state")
+		return
+	}
+	actor := auth.MustUser(r.Context())
+	action := "admin.under_attack_off"
+	if in.Enabled {
+		action = "admin.under_attack_on"
+	}
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, action, "", "", nil)
+	web.JSON(w, http.StatusOK, map[string]any{"enabled": in.Enabled})
+}
+
 // --- edge fleet ---
 
 func (s *Service) Edges(w http.ResponseWriter, r *http.Request) {

@@ -21,6 +21,7 @@ export default function AdminPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Admin</h1>
+      <UnderAttackBanner />
       <div className="flex gap-1 border-b border-edge">
         {(["users", "edges", "blocklists", "feeds", "email", "audit", "enrollment"] as Tab[]).map((t) => (
           <button
@@ -39,6 +40,51 @@ export default function AdminPage() {
       {tab === "email" && <EmailSettings />}
       {tab === "audit" && <AuditLog />}
       {tab === "enrollment" && <Enrollment />}
+    </div>
+  );
+}
+
+function UnderAttackBanner() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get<{ enabled: boolean }>("/admin/under-attack").then((r) => setEnabled(r.enabled)).catch(() => setEnabled(false));
+  }, []);
+
+  async function toggle(v: boolean) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ enabled: boolean }>("/admin/under-attack", { enabled: v });
+      setEnabled(r.enabled);
+    } catch {
+      /* leave state as-is on failure */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (enabled === null) return null;
+
+  return (
+    <div
+      className={`flex items-center justify-between gap-4 rounded-xl border p-4 ${
+        enabled ? "border-red-500/50 bg-red-500/10" : "border-edge bg-panel/60"
+      }`}
+    >
+      <div>
+        <div className="flex items-center gap-2 font-medium">
+          Under&nbsp;Attack mode
+          {enabled && <Badge tone="red">active</Badge>}
+        </div>
+        <p className="mt-1 text-sm text-slate-400">
+          {enabled
+            ? "Every visitor must pass a proof-of-work challenge before reaching the dashboard. Turn it off once the flood subsides."
+            : "Enable during an L7 flood to make every visitor solve a proof-of-work challenge. Real browsers pass once; browser-spoofing bots are stopped and repeat offenders auto-banned. Takes effect within seconds — no restart."}
+        </p>
+      </div>
+      <Toggle checked={enabled} onChange={toggle} label={busy ? "…" : enabled ? "On" : "Off"} />
     </div>
   );
 }

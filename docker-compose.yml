@@ -117,7 +117,7 @@ services:
       CP_RATE_LIMIT_RPM: ${CP_RATE_LIMIT_RPM:-12000}
       CP_BOT_SENSITIVITY: ${CP_BOT_SENSITIVITY:-low}
       CP_WAF_ENGINE: ${CP_WAF_ENGINE:-DetectionOnly}
-      CP_UNDER_ATTACK: ${CP_UNDER_ATTACK:-off}
+      CP_UNDER_ATTACK: ${CP_UNDER_ATTACK:-auto}
       CP_API_UPSTREAM: api:8080
       CP_DASH_UPSTREAM: dashboard:3000
     depends_on:
