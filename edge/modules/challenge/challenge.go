@@ -61,9 +61,10 @@ type Handler struct {
 	VerifyURL     string `json:"verify_url,omitempty"` // override provider default (testing)
 
 	// UnderAttack controls when clients are challenged:
-	//   ""    challenge only requests the bot scorer flagged (default; per-domain)
-	//   "on"  "under attack" — challenge every uncleared visitor
-	//   "off" disabled — never challenge (a pure pass-through for this site)
+	//   ""     challenge only requests the bot scorer flagged (default; per-domain)
+	//   "on"   "under attack" — challenge every uncleared visitor
+	//   "off"  disabled — never challenge (a pure pass-through for this site)
+	//   "auto" challenge everyone iff the live Redis flag is set (dashboard toggle)
 	UnderAttack string `json:"under_attack,omitempty"`
 
 	prov   captchaProvider
@@ -101,10 +102,6 @@ func (h *Handler) Provision(_ caddy.Context) error {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	// Explicitly disabled for this site: pass everything through untouched.
-	if h.UnderAttack == "off" {
-		return next.ServeHTTP(w, r)
-	}
 	if r.URL.Path == submitPath {
 		if h.Mode == "captcha" {
 			return h.verifyCaptchaSubmit(w, r)
@@ -114,8 +111,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	if h.hasClearance(r) {
 		return next.ServeHTTP(w, r)
 	}
-	flagged, _ := caddyhttp.GetVar(r.Context(), "aegis_challenge").(bool)
-	if h.UnderAttack == "on" || flagged {
+	if h.shouldChallenge(r) {
 		// Auto-ban: an IP that keeps getting challenged but never solves is cut
 		// off with a cheap rejection rather than a rendered interstitial, so a
 		// browser-spoofing flood can't keep us busy serving challenge pages.
@@ -128,6 +124,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		return nil
 	}
 	return next.ServeHTTP(w, r)
+}
+
+// shouldChallenge decides whether an uncleared request must solve a challenge.
+func (h *Handler) shouldChallenge(r *http.Request) bool {
+	switch h.UnderAttack {
+	case "on":
+		return true
+	case "off":
+		return false
+	case "auto":
+		return metrics.UnderAttackActive()
+	default: // "" — per-domain: challenge only what the bot scorer flagged
+		flagged, _ := caddyhttp.GetVar(r.Context(), "aegis_challenge").(bool)
+		return flagged
+	}
 }
 
 // verifyCaptchaSubmit validates a posted CAPTCHA response and, on success, mints
@@ -342,10 +353,10 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 				switch v := d.Val(); v {
-				case "on", "off":
+				case "on", "off", "auto":
 					h.UnderAttack = v
 				default:
-					return d.Errf("under_attack must be 'on' or 'off', got %q", v)
+					return d.Errf("under_attack must be 'on', 'off' or 'auto', got %q", v)
 				}
 			default:
 				return d.Errf("unknown challenge option %q", d.Val())

@@ -61,6 +61,49 @@ func RequestRate(ip string) int {
 	return int(n)
 }
 
+// UnderAttackKey is the Redis flag the control plane sets to switch the edge's
+// dashboard "under attack" challenge on/off live (no reload needed).
+const UnderAttackKey = "aegis:under_attack"
+
+// uaCacheTTL bounds how often the flag is actually read from Redis, so the
+// per-request check costs at most one GET every couple of seconds.
+const uaCacheTTL = 2 * time.Second
+
+var (
+	uaMu        sync.Mutex
+	uaCached    bool
+	uaCheckedAt time.Time
+)
+
+// UnderAttackActive reports whether dashboard "under attack" mode is enabled,
+// caching the Redis flag briefly. On any Redis error it keeps the last known
+// value, so a transient blip never silently drops protection mid-attack.
+func UnderAttackActive() bool {
+	uaMu.Lock()
+	if time.Since(uaCheckedAt) < uaCacheTTL {
+		v := uaCached
+		uaMu.Unlock()
+		return v
+	}
+	uaCheckedAt = time.Now() // claim the refresh so concurrent callers use cache
+	last := uaCached
+	uaMu.Unlock()
+
+	v := last
+	if c := get(); c != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		n, err := c.Exists(ctx, UnderAttackKey).Result()
+		cancel()
+		if err == nil {
+			v = n > 0
+		}
+	}
+	uaMu.Lock()
+	uaCached = v
+	uaMu.Unlock()
+	return v
+}
+
 // challengeStrikeWindow is how long per-IP challenge strikes accumulate before
 // the counter resets (giving a formerly-abusive IP another chance).
 const challengeStrikeWindow = 2 * time.Minute

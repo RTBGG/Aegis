@@ -79,16 +79,17 @@
 			`
 		}
 
-		# "Under attack" proof-of-work gate. Off by default; set CP_UNDER_ATTACK=on
-		# during a flood so every uncleared visitor must solve a PoW before reaching
-		# the dashboard/API. Real browsers solve it once (1h clearance cookie);
-		# browser-spoofing floods that don't run JS can't pass, and repeat offenders
-		# are auto-banned at the edge. The interstitial is far cheaper to serve than
-		# the app, so distributed floods that slip past the per-IP rate limit are
-		# absorbed here.
+		# "Under attack" proof-of-work gate. Default "auto" is controllable live from
+		# the dashboard (Admin → toggle) — no reload; force with CP_UNDER_ATTACK=on
+		# or disable entirely with =off. When active, every uncleared visitor must
+		# solve a PoW before reaching the dashboard/API. Real browsers solve it once
+		# (1h clearance cookie); browser-spoofing floods that don't run JS can't pass,
+		# and repeat offenders are auto-banned at the edge. The interstitial is far
+		# cheaper to serve than the app, so distributed floods that slip past the
+		# per-IP rate limit are absorbed here.
 		challenge {
 			secret {env.CHALLENGE_SECRET}
-			under_attack {$CP_UNDER_ATTACK:off}
+			under_attack {$CP_UNDER_ATTACK:auto}
 		}
 
 		handle /api/* {
