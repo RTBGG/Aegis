@@ -44,59 +44,63 @@
 	}
 
 	handle {
-		# TLS/HTTP fingerprint (also feeds analytics + bot scoring).
-		ja4
-
-		# Per-source-IP request cap (uses the real client IP, not a spoofable
-		# X-Forwarded-For). CP_RATE_LIMIT_RPM requests per minute, then 429.
-		# Deliberately high (~200 req/s) so a full dashboard reload — dozens of
-		# JS/CSS/API requests — and even furious F5-mashing or many users behind
-		# one NAT never trip it; this is a volumetric backstop, with nftables and
-		# botscore as the finer-grained layers.
-		rate_limit {
-			zone control_plane {
-				key {http.request.remote_ip}
-				events {$CP_RATE_LIMIT_RPM:12000}
-				window 1m
+		# Explicit-order route: the cheap "under attack" gate must reject floods
+		# BEFORE the expensive OWASP-CRS WAF, bot scoring and per-request analytics
+		# run — otherwise every flood request pays for all of that before being
+		# challenged, spiking CPU. `route` executes in written order, unlike the
+		# global order customer sites rely on (where challenge follows bot scoring).
+		route {
+			# Per-source-IP volumetric cap (real client IP, not a spoofable
+			# X-Forwarded-For). Deliberately high (~200 req/s) so reloads, F5-mashing
+			# and many users behind one NAT never trip it; nftables + the gate below
+			# are the finer layers.
+			rate_limit {
+				zone control_plane {
+					key {http.request.remote_ip}
+					events {$CP_RATE_LIMIT_RPM:12000}
+					window 1m
+				}
 			}
-		}
 
-		# Behavioural bot scoring (blocks obvious automation; no interactive
-		# challenge so legitimate admins are never interrupted).
-		botscore {
-			sensitivity {$CP_BOT_SENSITIVITY:low}
-		}
+			# "Under attack" proof-of-work gate — runs early so an uncleared flood
+			# gets a cheap interstitial / auto-ban 429 without touching the WAF,
+			# bot scorer, analytics or backend. Default "auto" is controllable live
+			# from the dashboard (Admin toggle); force with CP_UNDER_ATTACK=on or
+			# disable with =off. Real browsers solve it once (1h clearance cookie)
+			# and fall through to the full stack below; browser-spoofing floods that
+			# don't run JS can't pass, and repeat offenders are auto-banned.
+			challenge {
+				secret {env.CHALLENGE_SECRET}
+				under_attack {$CP_UNDER_ATTACK:auto}
+			}
 
-		# Coraza + OWASP CRS. Defaults to DetectionOnly so the in-dashboard
-		# WAF-rule editor (which legitimately posts SecLang) is not blocked;
-		# set CP_WAF_ENGINE=On to actively block attacks on the dashboard/API.
-		coraza_waf {
-			directives `
-				Include /etc/caddy/coraza/coraza.conf
-				Include /etc/caddy/coraza/crs-setup.conf
-				Include /etc/caddy/coraza/rules/*.conf
-				SecRuleEngine {$CP_WAF_ENGINE:DetectionOnly}
-			`
-		}
+			# TLS/HTTP fingerprint + per-request analytics — only for requests that
+			# clear the gate, so a flood can't also flood the analytics pipeline.
+			ja4
 
-		# "Under attack" proof-of-work gate. Default "auto" is controllable live from
-		# the dashboard (Admin → toggle) — no reload; force with CP_UNDER_ATTACK=on
-		# or disable entirely with =off. When active, every uncleared visitor must
-		# solve a PoW before reaching the dashboard/API. Real browsers solve it once
-		# (1h clearance cookie); browser-spoofing floods that don't run JS can't pass,
-		# and repeat offenders are auto-banned at the edge. The interstitial is far
-		# cheaper to serve than the app, so distributed floods that slip past the
-		# per-IP rate limit are absorbed here.
-		challenge {
-			secret {env.CHALLENGE_SECRET}
-			under_attack {$CP_UNDER_ATTACK:auto}
-		}
+			# Coraza + OWASP CRS. DetectionOnly by default so the in-dashboard
+			# WAF-rule editor (which posts SecLang) isn't blocked; CP_WAF_ENGINE=On
+			# to actively block attacks on the dashboard/API.
+			coraza_waf {
+				directives `
+					Include /etc/caddy/coraza/coraza.conf
+					Include /etc/caddy/coraza/crs-setup.conf
+					Include /etc/caddy/coraza/rules/*.conf
+					SecRuleEngine {$CP_WAF_ENGINE:DetectionOnly}
+				`
+			}
 
-		handle /api/* {
-			reverse_proxy {$CP_API_UPSTREAM:api:8080}
-		}
-		handle {
-			reverse_proxy {$CP_DASH_UPSTREAM:dashboard:3000}
+			# Behavioural bot scoring (blocks obvious automation).
+			botscore {
+				sensitivity {$CP_BOT_SENSITIVITY:low}
+			}
+
+			handle /api/* {
+				reverse_proxy {$CP_API_UPSTREAM:api:8080}
+			}
+			handle {
+				reverse_proxy {$CP_DASH_UPSTREAM:dashboard:3000}
+			}
 		}
 	}
 }
