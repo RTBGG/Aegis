@@ -114,7 +114,7 @@ services:
       ACME_EMAIL: ${ACME_EMAIL}
       CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-cp.localtest.me}
       CP_TLS: ${CP_TLS:-internal}
-      CP_RATE_LIMIT_RPM: ${CP_RATE_LIMIT_RPM:-1200}
+      CP_RATE_LIMIT_RPM: ${CP_RATE_LIMIT_RPM:-12000}
       CP_BOT_SENSITIVITY: ${CP_BOT_SENSITIVITY:-low}
       CP_WAF_ENGINE: ${CP_WAF_ENGINE:-DetectionOnly}
       CP_API_UPSTREAM: api:8080

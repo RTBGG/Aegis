@@ -49,10 +49,14 @@
 
 		# Per-source-IP request cap (uses the real client IP, not a spoofable
 		# X-Forwarded-For). CP_RATE_LIMIT_RPM requests per minute, then 429.
+		# Deliberately high (~200 req/s) so a full dashboard reload — dozens of
+		# JS/CSS/API requests — and even furious F5-mashing or many users behind
+		# one NAT never trip it; this is a volumetric backstop, with nftables and
+		# botscore as the finer-grained layers.
 		rate_limit {
 			zone control_plane {
 				key {http.request.remote_ip}
-				events {$CP_RATE_LIMIT_RPM:1200}
+				events {$CP_RATE_LIMIT_RPM:12000}
 				window 1m
 			}
 		}
