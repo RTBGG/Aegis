@@ -22,6 +22,9 @@ import (
 //go:embed edge.sh
 var edgeScript string
 
+//go:embed edge.nft
+var edgeNftables string
+
 // Deps carries the handler services the router wires together.
 type Deps struct {
 	Cfg       *appcfg.Config
@@ -52,6 +55,12 @@ func NewRouter(d Deps) http.Handler {
 	r.Get("/install/edge.sh", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/x-shellscript")
 		_, _ = w.Write([]byte(strings.ReplaceAll(edgeScript, "__CONTROL_PLANE_URL__", strings.TrimRight(d.Cfg.ControlPlaneURL, "/"))))
+	})
+
+	// Served L3/L4 firewall ruleset that edge.sh installs during enrollment.
+	r.Get("/install/edge.nft", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(edgeNftables))
 	})
 
 	// Edge enrollment: unauthenticated except by the single-use enrollment token

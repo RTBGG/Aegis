@@ -1,48 +1,62 @@
 #!/usr/sbin/nft -f
-# Aegis edge — L3/L4 baseline DDoS protection for a Debian 13 edge node.
-# Install to /etc/nftables.conf and `systemctl enable --now nftables`.
+# Aegis edge — L3/L4 DDoS baseline for a Debian 13 edge node.
+#
+# Reference copy. The canonical version is embedded in the control plane and
+# served at /install/edge.nft; edge.sh fetches it during enrollment and installs
+# it to /etc/nftables.conf. Keep this in sync with
+# control-plane/internal/httpapi/edge.nft.
+#
+# The edge runs Caddy in Docker with published ports (80/443), so this ruleset
+# must be safe alongside Docker's own NAT/forward rules: it does NOT `flush
+# ruleset` (which would wipe them) and does NOT default-drop the forward chain
+# (traffic Docker forwards to the published Caddy container traverses FORWARD, so
+# a blanket drop there would black-hole every proxied site). Both base chains
+# therefore default to `accept` and only DROP abusive traffic:
+#   * invalid conntrack packets
+#   * sources in the control-plane-managed blackhole set
+#   * ICMP echo floods
+#   * excess NEW connections to the web ports (per-source SYN-flood / volumetric cap)
+#
+# The add/delete idiom makes re-applying idempotent without touching Docker's tables.
 
-flush ruleset
+add table inet aegis
+delete table inet aegis
 
 table inet aegis {
-	# Dynamic deny set the control plane can populate (IPs/CIDRs).
 	set blackhole {
 		type ipv4_addr
 		flags interval
 	}
+	set blackhole6 {
+		type ipv6_addr
+		flags interval
+	}
 
-	chain inbound {
-		type filter hook input priority filter; policy drop;
+	# Host-destined traffic (e.g. SSH). Default accept; SSH is intentionally left
+	# open so a remote edge can't lock itself out.
+	chain input {
+		type filter hook input priority filter; policy accept;
 
-		# Conntrack fast paths.
-		ct state established,related accept
 		ct state invalid drop
-
-		iif "lo" accept
-
-		# ICMP / ping, rate-limited.
-		ip protocol icmp icmp type echo-request limit rate 5/second accept
-		ip6 nexthdr ipv6-icmp icmpv6 type { echo-request, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } limit rate 10/second accept
-
-		# Drop anything from the control-plane-managed blackhole set.
 		ip saddr @blackhole drop
+		ip6 saddr @blackhole6 drop
 
-		# SSH (tighten the source in production).
-		tcp dport 22 ct state new limit rate 10/minute accept
-
-		# HTTP/HTTPS with SYN flood protection: cap NEW connections per source.
-		tcp dport { 80, 443 } ct state new meter http_meter { ip saddr limit rate 100/second burst 200 packets } accept
-		tcp dport { 80, 443 } ct state new meter http6_meter { ip6 saddr limit rate 100/second burst 200 packets } accept
-
-		# Everything else: drop.
-		counter drop
+		# ICMP echo flood cap (ping still works under the limit).
+		ip protocol icmp icmp type echo-request limit rate over 5/second burst 10 packets drop
+		ip6 nexthdr ipv6-icmp icmpv6 type echo-request limit rate over 10/second burst 20 packets drop
 	}
 
+	# Traffic Docker forwards to the published Caddy container. Default accept so
+	# container networking is untouched; only excess NEW web connections are
+	# dropped (per-source SYN-flood / volumetric cap).
 	chain forward {
-		type filter hook forward priority filter; policy drop;
-	}
+		type filter hook forward priority filter; policy accept;
 
-	chain outbound {
-		type filter hook output priority filter; policy accept;
+		ct state invalid drop
+		ip saddr @blackhole drop
+		ip6 saddr @blackhole6 drop
+
+		tcp dport { 80, 443 } ct state new meter aegis_http4 { ip saddr limit rate over 100/second burst 200 packets } drop
+		tcp dport { 80, 443 } ct state new meter aegis_http6 { ip6 saddr limit rate over 100/second burst 200 packets } drop
 	}
 }
