@@ -4,12 +4,13 @@ import { api, ApiError } from "@/lib/api";
 import type { AdminUser, Edge, Blocklist, ThreatFeed, EmailConfig, ImpersonationAuditEntry } from "@/lib/types";
 import { Button, Input, Select, Field, Card, Badge, Toggle, ErrorText } from "@/components/ui";
 
-type Tab = "users" | "edges" | "blocklists" | "feeds" | "email" | "audit" | "enrollment";
+type Tab = "users" | "edges" | "blocklists" | "blackhole" | "feeds" | "email" | "audit" | "enrollment";
 
 const TAB_LABELS: Record<Tab, string> = {
   users: "Users",
   edges: "Edges",
   blocklists: "Blocklists",
+  blackhole: "Blackhole",
   feeds: "Threat feeds",
   email: "Email",
   audit: "Audit log",
@@ -23,7 +24,7 @@ export default function AdminPage() {
       <h1 className="text-2xl font-semibold">Admin</h1>
       <UnderAttackBanner />
       <div className="flex gap-1 border-b border-edge">
-        {(["users", "edges", "blocklists", "feeds", "email", "audit", "enrollment"] as Tab[]).map((t) => (
+        {(["users", "edges", "blocklists", "blackhole", "feeds", "email", "audit", "enrollment"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -36,6 +37,7 @@ export default function AdminPage() {
       {tab === "users" && <Users />}
       {tab === "edges" && <Edges />}
       {tab === "blocklists" && <Blocklists />}
+      {tab === "blackhole" && <BlackholeView />}
       {tab === "feeds" && <ThreatFeeds />}
       {tab === "email" && <EmailSettings />}
       {tab === "audit" && <AuditLog />}
@@ -86,6 +88,70 @@ function UnderAttackBanner() {
       </div>
       <Toggle checked={enabled} onChange={toggle} label={busy ? "…" : enabled ? "On" : "Off"} />
     </div>
+  );
+}
+
+function expiresIn(unix: number): string {
+  const secs = Math.max(0, unix - Math.floor(Date.now() / 1000));
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+function BlackholeView() {
+  const [ips, setIps] = useState<{ ip: string; expires_at: number }[]>([]);
+
+  function load() {
+    api.get<{ ips: { ip: string; expires_at: number }[] }>("/admin/blackhole").then((r) => setIps(r.ips ?? [])).catch(() => {});
+  }
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  async function remove(ip: string) {
+    await api.del(`/admin/blackhole/${encodeURIComponent(ip)}`);
+    load();
+  }
+  async function clearAll() {
+    if (!confirm("Clear all blackholed IPs? They will no longer be dropped at L3.")) return;
+    await api.del("/admin/blackhole");
+    load();
+  }
+
+  return (
+    <Card title="L3 blackhole" actions={ips.length > 0 ? <Button variant="ghost" onClick={clearAll}>Clear all</Button> : undefined}>
+      <p className="mb-3 text-sm text-slate-400">
+        IPs auto-banned during a flood (confirmed via the proof-of-work challenge). A host-side agent drops these in the
+        kernel (nftables) on every edge; entries expire automatically.
+      </p>
+      {ips.length === 0 ? (
+        <p className="text-sm text-slate-400">No IPs currently blackholed.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs uppercase text-slate-500">
+            <tr>
+              <th className="py-2">IP</th>
+              <th>Expires in</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-edge">
+            {ips.map((e) => (
+              <tr key={e.ip}>
+                <td className="py-2 font-mono">{e.ip}</td>
+                <td className="text-slate-400">{expiresIn(e.expires_at)}</td>
+                <td className="text-right">
+                  <button onClick={() => remove(e.ip)} className="text-red-400 hover:underline">
+                    remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Card>
   );
 }
 

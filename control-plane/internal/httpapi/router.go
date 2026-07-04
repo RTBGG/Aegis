@@ -73,7 +73,8 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/config", d.Edge.Config)
 		r.Post("/telemetry", d.Edge.Telemetry)
 		r.Post("/events", d.Edge.Events)
-		r.Get("/blackhole", d.Admin.Blackhole) // L3 drop list for the host nft sync agent
+		r.Get("/blackhole", d.Admin.Blackhole)        // L3 drop list for the host nft sync agent
+		r.Post("/blackhole", d.Admin.ReportBlackhole) // agents report auto-banned IPs
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -123,6 +124,9 @@ func NewRouter(d Deps) http.Handler {
 				r.Use(auth.RequireRole("admin", "superadmin"))
 				r.Get("/admin/under-attack", d.Admin.UnderAttack)
 				r.Post("/admin/under-attack", d.Admin.SetUnderAttack)
+				r.Get("/admin/blackhole", d.Admin.AdminBlackhole)
+				r.Delete("/admin/blackhole", d.Admin.ClearBlackhole)
+				r.Delete("/admin/blackhole/{ip}", d.Admin.RemoveBlackholeIP)
 				r.Get("/admin/users", d.Admin.Users)
 				r.Post("/admin/users/{userID}/status", d.Admin.SetUserStatus)
 				r.Post("/admin/users/{userID}/impersonate", d.Auth.ImpersonateStart)

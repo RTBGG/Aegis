@@ -116,6 +116,57 @@ volumes:
   caddyconfig:
 EOF
 
+# --- L3 auto-blackhole sync: apply the control plane's aggregated ban list to
+# this host's nftables 'aegis' blackhole set (the edge container can't). Keep in
+# sync with deploy/debian13/blackhole-sync.sh. ---
+cat > /usr/local/bin/aegis-blackhole-sync <<'SYNC'
+#!/usr/bin/env bash
+set -euo pipefail
+URL="${AEGIS_BLACKHOLE_URL:-http://127.0.0.1:8080/edge/v1/blackhole}"
+TOKEN="${AEGIS_AGENT_TOKEN:-}"
+command -v nft >/dev/null 2>&1 || exit 0
+nft list set inet aegis blackhole >/dev/null 2>&1 || exit 0
+hdr=()
+[ -n "$TOKEN" ] && hdr=(-H "Authorization: Bearer ${TOKEN}")
+list="$(curl -fsS --max-time 5 "${hdr[@]}" "$URL" 2>/dev/null || true)"
+v4="$(printf '%s\n' "$list" | grep -E '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' || true)"
+v6="$(printf '%s\n' "$list" | grep -E '^[0-9a-fA-F:]+$' || true)"
+rules="flush set inet aegis blackhole
+flush set inet aegis blackhole6"
+if [ -n "$v4" ]; then rules+=$'\n'"add element inet aegis blackhole { $(paste -sd, <<<"$v4") }"; fi
+if [ -n "$v6" ]; then rules+=$'\n'"add element inet aegis blackhole6 { $(paste -sd, <<<"$v6") }"; fi
+printf '%s\n' "$rules" | nft -f - 2>/dev/null || true
+SYNC
+chmod 0755 /usr/local/bin/aegis-blackhole-sync
+( umask 077; cat > /etc/default/aegis-blackhole <<EOF
+AEGIS_BLACKHOLE_URL=${CONTROL_PLANE}/edge/v1/blackhole
+AEGIS_AGENT_TOKEN=${AGENT_TOKEN}
+EOF
+)
+cat > /etc/systemd/system/aegis-blackhole.service <<'UNIT'
+[Unit]
+Description=Aegis — sync auto-banned IPs into the nftables blackhole set
+After=network-online.target nftables.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/aegis-blackhole
+ExecStart=/usr/local/bin/aegis-blackhole-sync
+UNIT
+cat > /etc/systemd/system/aegis-blackhole.timer <<'UNIT'
+[Unit]
+Description=Aegis — periodically sync the nftables blackhole set
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=30s
+AccuracySec=5s
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable --now aegis-blackhole.timer 2>/dev/null || true
+grn "L3 auto-blackhole sync installed."
+
 grn "Starting edge…"
 docker compose -f "${CONF_DIR}/docker-compose.yml" up -d
 grn "Done. This node will appear in Admin → Edge servers and join the DNS rotation once healthy."
