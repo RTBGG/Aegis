@@ -5,6 +5,7 @@ set -euo pipefail
 
 red(){ printf '\033[31m%s\033[0m\n' "$*"; }
 grn(){ printf '\033[32m%s\033[0m\n' "$*"; }
+ylw(){ printf '\033[33m%s\033[0m\n' "$*"; }
 
 [ "$(id -u)" -eq 0 ] || { red "Run as root (sudo)."; exit 1; }
 [ -f docker-compose.yml ] || { red "Run from the repository root (docker-compose.yml not found)."; exit 1; }
@@ -96,6 +97,22 @@ fi
 
 grn "Building and starting the stack…"
 docker compose up -d --build
+
+# --- L3/L4 firewall (nftables), Docker-safe ---
+# Adds a per-source SYN-flood/volumetric cap on 80/443 plus a control-plane
+# blackhole set, without flushing Docker's rules. Skip with AEGIS_SKIP_NFTABLES=1.
+if [ "${AEGIS_SKIP_NFTABLES:-}" = "1" ]; then
+  ylw "AEGIS_SKIP_NFTABLES=1 — skipping firewall setup."
+elif [ -f deploy/debian13/nftables/allinone.nft ]; then
+  grn "Applying L3/L4 firewall (nftables)…"
+  apt-get install -y nftables >/dev/null 2>&1 || true
+  install -m 0644 deploy/debian13/nftables/allinone.nft /etc/nftables.conf
+  if systemctl enable --now nftables >/dev/null 2>&1 && nft -f /etc/nftables.conf 2>/dev/null; then
+    grn "Firewall active (per-source cap on 80/443; drop set 'aegis blackhole')."
+  else
+    ylw "Could not enable nftables automatically; review /etc/nftables.conf and run: nft -f /etc/nftables.conf"
+  fi
+fi
 
 grn "Done. Dashboard: $(grep '^CONTROL_PLANE_URL=' .env | cut -d= -f2-)"
 grn "Check status with: docker compose ps"

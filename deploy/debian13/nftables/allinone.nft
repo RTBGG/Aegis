@@ -1,0 +1,57 @@
+#!/usr/sbin/nft -f
+# Aegis all-in-one — L3/L4 DDoS baseline that is SAFE alongside Docker.
+#
+# The all-in-one runs every service in Docker with published ports, so unlike a
+# bare-metal edge firewall this ruleset must:
+#   * NOT `flush ruleset`  — that would wipe Docker's own NAT/forward rules.
+#   * NOT default-drop the forward chain — traffic Docker forwards to the
+#     published containers (the web entrypoint on 80/443) traverses FORWARD, so a
+#     blanket drop there would black-hole the dashboard and every proxied site.
+# Both base chains therefore default to `accept` and only DROP abusive traffic.
+#
+# Install to /etc/nftables.conf and `systemctl enable --now nftables`. The
+# add/delete/table idiom below makes re-applying idempotent without touching
+# Docker's tables. The control plane can populate the `blackhole`/`blackhole6`
+# sets to drop known-bad sources at L3.
+
+add table inet aegis
+delete table inet aegis
+
+table inet aegis {
+	set blackhole {
+		type ipv4_addr
+		flags interval
+	}
+	set blackhole6 {
+		type ipv6_addr
+		flags interval
+	}
+
+	# Host-destined traffic (e.g. SSH). Default accept; SSH is intentionally left
+	# fully open so a remote install can't lock itself out.
+	chain input {
+		type filter hook input priority filter; policy accept;
+
+		ct state invalid drop
+		ip saddr @blackhole drop
+		ip6 saddr @blackhole6 drop
+
+		# ICMP echo flood cap (ping still works under the limit).
+		ip protocol icmp icmp type echo-request limit rate over 5/second burst 10 packets drop
+		ip6 nexthdr ipv6-icmp icmpv6 type echo-request limit rate over 10/second burst 20 packets drop
+	}
+
+	# Traffic Docker forwards to the published containers. Default accept so
+	# container networking is untouched; only excess NEW web connections are
+	# dropped (per-source SYN-flood / volumetric cap).
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+
+		ct state invalid drop
+		ip saddr @blackhole drop
+		ip6 saddr @blackhole6 drop
+
+		tcp dport { 80, 443 } ct state new meter aegis_http4 { ip saddr limit rate over 100/second burst 200 packets } drop
+		tcp dport { 80, 443 } ct state new meter aegis_http6 { ip6 saddr limit rate over 100/second burst 200 packets } drop
+	}
+}
