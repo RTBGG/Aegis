@@ -104,16 +104,13 @@ func UnderAttackActive() bool {
 	return v
 }
 
-// BlackholeKey is the Redis sorted set of IPs to drop at L3 (score = unix expiry).
-// The control plane serves it and a host-side agent applies it to nftables, since
-// the edge runs in a container and can't touch the host firewall itself.
-const BlackholeKey = "aegis:blackhole"
+// BlackholePendingKey is the edge-local set of freshly auto-banned IPs. The
+// node-agent drains it and reports the IPs to the control plane, which aggregates
+// them into the authoritative blackhole list served to every edge's host-side nft
+// sync agent (the edge runs in a container and can't touch the host firewall).
+const BlackholePendingKey = "aegis:blackhole:pending"
 
-// blackholeTTL is how long an auto-banned IP stays in the L3 drop list. Kept
-// short so a shared/NAT IP recovers quickly once the flood from it stops.
-const blackholeTTL = 10 * time.Minute
-
-// Blackhole records an IP for host-level L3 dropping (fire-and-forget). Only the
+// Blackhole queues an IP for host-level L3 dropping (fire-and-forget). Only the
 // worst offenders (already auto-banned at L7) reach here.
 func Blackhole(ip string) {
 	c := get()
@@ -123,8 +120,9 @@ func Blackhole(ip string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
-		score := float64(time.Now().Add(blackholeTTL).Unix())
-		_ = c.ZAdd(ctx, BlackholeKey, redis.Z{Score: score, Member: ip}).Err()
+		_ = c.SAdd(ctx, BlackholePendingKey, ip).Err()
+		// Bound the set so a stalled agent can't grow it unbounded.
+		c.Expire(ctx, BlackholePendingKey, 10*time.Minute)
 	}()
 }
 

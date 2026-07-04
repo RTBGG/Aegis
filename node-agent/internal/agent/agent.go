@@ -140,7 +140,22 @@ func (c Config) telemetryLoop(ctx context.Context, version *atomic.Int64, log *s
 				log.Warn("events ship failed", "err", errString(err), "count", len(evs))
 			}
 		}
+		if ips := drainBlackhole(ctx, rdb); len(ips) > 0 {
+			if err := c.sendBlackhole(ctx, ips); err != nil && ctx.Err() == nil {
+				log.Warn("blackhole report failed", "err", errString(err), "count", len(ips))
+			}
+		}
 	}
+}
+
+// drainBlackhole atomically pops the edge-local set of freshly auto-banned IPs
+// so they can be reported to the control plane for aggregation.
+func drainBlackhole(ctx context.Context, rdb *redis.Client) []string {
+	ips, err := rdb.SPopN(ctx, "aegis:blackhole:pending", 10000).Result()
+	if err != nil || len(ips) == 0 {
+		return nil
+	}
+	return ips
 }
 
 // drainEvents atomically pops a batch of analytics events from Redis.

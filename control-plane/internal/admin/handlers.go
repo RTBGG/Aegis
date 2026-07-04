@@ -179,17 +179,27 @@ func (s *Service) SetUnderAttack(w http.ResponseWriter, r *http.Request) {
 
 // --- L3 blackhole (auto-banned IPs, applied to the host nftables set) ---
 
-// blackholeKey mirrors the edge's metrics.BlackholeKey: a Redis sorted set of
-// IPs to drop at L3, scored by unix expiry. The edge (which shares this Redis)
-// adds confirmed flooders; the host-side sync agent fetches this list.
+// blackholeKey is the authoritative Redis sorted set of IPs to drop at L3, scored
+// by unix expiry. Every edge's node-agent reports its auto-bans here (aggregated
+// across the fleet); the host-side sync agents fetch the list and apply it to the
+// nftables 'aegis' set.
 const blackholeKey = "aegis:blackhole"
 
+// blackholeTTL is how long a reported IP stays on the list. Short, so a shared/NAT
+// IP recovers quickly once its flood stops.
+const blackholeTTL = 10 * time.Minute
+
+// pruneBlackhole drops entries whose expiry has passed. now is the unix-seconds
+// string used as the score boundary.
+func (s *Service) pruneBlackhole(r *http.Request, now string) {
+	_ = s.Store.Redis.ZRemRangeByScore(r.Context(), blackholeKey, "-inf", "("+now).Err()
+}
+
 // Blackhole serves the current L3 drop list (one IP per line) for the host-side
-// nftables sync agent, pruning entries whose expiry has passed. Edge-authenticated.
+// nftables sync agent, pruning expired entries. Edge-authenticated.
 func (s *Service) Blackhole(w http.ResponseWriter, r *http.Request) {
 	now := strconv.FormatInt(time.Now().Unix(), 10)
-	// Remove expired entries (score < now), then return the rest (score >= now).
-	_ = s.Store.Redis.ZRemRangeByScore(r.Context(), blackholeKey, "-inf", "("+now).Err()
+	s.pruneBlackhole(r, now)
 	ips, err := s.Store.Redis.ZRangeByScore(r.Context(), blackholeKey, &redis.ZRangeBy{Min: now, Max: "+inf"}).Result()
 	if err != nil {
 		web.Error(w, http.StatusInternalServerError, "internal", "could not read blackhole")
@@ -199,6 +209,67 @@ func (s *Service) Blackhole(w http.ResponseWriter, r *http.Request) {
 	for _, ip := range ips {
 		_, _ = w.Write([]byte(ip + "\n"))
 	}
+}
+
+// ReportBlackhole ingests auto-banned IPs an edge node-agent reports, adding them
+// to the aggregated list with a fresh expiry. Edge-authenticated.
+func (s *Service) ReportBlackhole(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		IPs []string `json:"ips"`
+	}
+	if err := web.Decode(w, r, &in); err != nil {
+		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	score := float64(time.Now().Add(blackholeTTL).Unix())
+	members := make([]redis.Z, 0, len(in.IPs))
+	for _, ip := range in.IPs {
+		if ip = strings.TrimSpace(ip); ip != "" {
+			members = append(members, redis.Z{Score: score, Member: ip})
+		}
+	}
+	if len(members) > 0 {
+		_ = s.Store.Redis.ZAdd(r.Context(), blackholeKey, members...).Err()
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(members)})
+}
+
+// AdminBlackhole returns the current blackholed IPs with expiry, for the admin UI.
+func (s *Service) AdminBlackhole(w http.ResponseWriter, r *http.Request) {
+	now := strconv.FormatInt(time.Now().Unix(), 10)
+	s.pruneBlackhole(r, now)
+	zs, err := s.Store.Redis.ZRangeByScoreWithScores(r.Context(), blackholeKey, &redis.ZRangeBy{Min: now, Max: "+inf"}).Result()
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not read blackhole")
+		return
+	}
+	type entry struct {
+		IP        string `json:"ip"`
+		ExpiresAt int64  `json:"expires_at"`
+	}
+	out := make([]entry, 0, len(zs))
+	for _, z := range zs {
+		ip, _ := z.Member.(string)
+		out = append(out, entry{IP: ip, ExpiresAt: int64(z.Score)})
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"ips": out})
+}
+
+// ClearBlackhole empties the blackhole list (audited).
+func (s *Service) ClearBlackhole(w http.ResponseWriter, r *http.Request) {
+	_ = s.Store.Redis.Del(r.Context(), blackholeKey).Err()
+	actor := auth.MustUser(r.Context())
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, "admin.blackhole_clear", "", "", nil)
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// RemoveBlackholeIP removes a single IP from the blackhole (audited).
+func (s *Service) RemoveBlackholeIP(w http.ResponseWriter, r *http.Request) {
+	ip := chi.URLParam(r, "ip")
+	_ = s.Store.Redis.ZRem(r.Context(), blackholeKey, ip).Err()
+	actor := auth.MustUser(r.Context())
+	_ = s.Store.Audit(r.Context(), nil, &actor.ID, "admin.blackhole_remove", ip, "", nil)
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "ip": ip})
 }
 
 // --- edge fleet ---
