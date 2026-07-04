@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -38,6 +39,10 @@ const (
 	// rendered interstitial. A real browser solves on its first page view and
 	// resets, so only clients that never pass reach this.
 	banStrikes = 25
+
+	// banCacheTTL is how long an auto-banned IP is rejected from the in-process
+	// cache before falling back to the Redis strike counter again.
+	banCacheTTL = 2 * time.Minute
 )
 
 func init() {
@@ -112,10 +117,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		return next.ServeHTTP(w, r)
 	}
 	if h.shouldChallenge(r) {
-		// Auto-ban: an IP that keeps getting challenged but never solves is cut
-		// off with a cheap rejection rather than a rendered interstitial, so a
-		// browser-spoofing flood can't keep us busy serving challenge pages.
-		if ip := clientIP(r); metrics.ChallengeStrike(ip) > banStrikes {
+		ip := clientIP(r)
+		// Fast path for a confirmed flooder: reject from an in-process cache with
+		// no Redis round-trip. Under a sustained flood almost every request lands
+		// here, so the per-request cost is just a map lookup + a 429.
+		if bannedInMemory(ip) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return nil
+		}
+		// Auto-ban: an IP that keeps getting challenged but never solves is cut off
+		// with a cheap rejection rather than a rendered interstitial.
+		if metrics.ChallengeStrike(ip) > banStrikes {
+			banInMemory(ip)
 			metrics.Incr("challenge_banned")
 			metrics.Blackhole(ip) // escalate a confirmed flooder to an L3 host drop
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -126,6 +139,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	}
 	return next.ServeHTTP(w, r)
 }
+
+// banCache is a process-local set of currently-banned IPs (value = ns expiry),
+// so a sustained flood is rejected without a Redis call per request.
+var banCache sync.Map // ip string -> int64 (unix nanos)
+
+func bannedInMemory(ip string) bool {
+	if v, ok := banCache.Load(ip); ok {
+		if time.Now().UnixNano() < v.(int64) {
+			return true
+		}
+		banCache.Delete(ip)
+	}
+	return false
+}
+
+func banInMemory(ip string) {
+	banCache.Store(ip, time.Now().Add(banCacheTTL).UnixNano())
+	pruneOnce.Do(startBanCachePruner)
+}
+
+// startBanCachePruner drops expired entries so the cache can't grow without bound
+// under an IP-rotating flood.
+func startBanCachePruner() {
+	go func() {
+		for range time.Tick(banCacheTTL) {
+			now := time.Now().UnixNano()
+			banCache.Range(func(k, v any) bool {
+				if now >= v.(int64) {
+					banCache.Delete(k)
+				}
+				return true
+			})
+		}
+	}()
+}
+
+var pruneOnce sync.Once
 
 // shouldChallenge decides whether an uncleared request must solve a challenge.
 func (h *Handler) shouldChallenge(r *http.Request) bool {
