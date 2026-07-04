@@ -22,6 +22,8 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+
+	"github.com/aegis/edge/internal/metrics"
 )
 
 const (
@@ -30,6 +32,12 @@ const (
 	clearanceTTL  = time.Hour
 	challengeTTL  = 5 * time.Minute
 	defaultDiff   = 16 // leading zero bits (~65k hashes, sub-second in-browser)
+
+	// banStrikes is how many challenges an IP may be served (without ever
+	// solving one) before it is auto-banned with a cheap rejection instead of a
+	// rendered interstitial. A real browser solves on its first page view and
+	// resets, so only clients that never pass reach this.
+	banStrikes = 25
 )
 
 func init() {
@@ -51,6 +59,12 @@ type Handler struct {
 	SiteKey       string `json:"sitekey,omitempty"`
 	CaptchaSecret string `json:"captcha_secret,omitempty"`
 	VerifyURL     string `json:"verify_url,omitempty"` // override provider default (testing)
+
+	// UnderAttack controls when clients are challenged:
+	//   ""    challenge only requests the bot scorer flagged (default; per-domain)
+	//   "on"  "under attack" — challenge every uncleared visitor
+	//   "off" disabled — never challenge (a pure pass-through for this site)
+	UnderAttack string `json:"under_attack,omitempty"`
 
 	prov   captchaProvider
 	client *http.Client
@@ -87,6 +101,10 @@ func (h *Handler) Provision(_ caddy.Context) error {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	// Explicitly disabled for this site: pass everything through untouched.
+	if h.UnderAttack == "off" {
+		return next.ServeHTTP(w, r)
+	}
 	if r.URL.Path == submitPath {
 		if h.Mode == "captcha" {
 			return h.verifyCaptchaSubmit(w, r)
@@ -96,7 +114,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 	if h.hasClearance(r) {
 		return next.ServeHTTP(w, r)
 	}
-	if flagged, _ := caddyhttp.GetVar(r.Context(), "aegis_challenge").(bool); flagged {
+	flagged, _ := caddyhttp.GetVar(r.Context(), "aegis_challenge").(bool)
+	if h.UnderAttack == "on" || flagged {
+		// Auto-ban: an IP that keeps getting challenged but never solves is cut
+		// off with a cheap rejection rather than a rendered interstitial, so a
+		// browser-spoofing flood can't keep us busy serving challenge pages.
+		if metrics.ChallengeStrike(clientIP(r)) > banStrikes {
+			metrics.Incr("challenge_banned")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return nil
+		}
 		h.serveInterstitial(w, r, r.URL.RequestURI())
 		return nil
 	}
@@ -149,6 +176,7 @@ func (h *Handler) hasClearance(r *http.Request) bool {
 }
 
 func (h *Handler) setClearance(w http.ResponseWriter, r *http.Request) {
+	metrics.ClearChallengeStrikes(clientIP(r)) // solved -> reset auto-ban counter
 	exp := strconv.FormatInt(time.Now().Add(clearanceTTL).Unix(), 16)
 	val := exp + "." + h.mac(clearanceData(r, exp))
 	http.SetCookie(w, &http.Cookie{
@@ -309,6 +337,16 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 				h.VerifyURL = d.Val()
+			case "under_attack":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				switch v := d.Val(); v {
+				case "on", "off":
+					h.UnderAttack = v
+				default:
+					return d.Errf("under_attack must be 'on' or 'off', got %q", v)
+				}
 			default:
 				return d.Errf("unknown challenge option %q", d.Val())
 			}
