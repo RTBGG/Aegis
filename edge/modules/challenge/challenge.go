@@ -115,8 +115,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 		// Auto-ban: an IP that keeps getting challenged but never solves is cut
 		// off with a cheap rejection rather than a rendered interstitial, so a
 		// browser-spoofing flood can't keep us busy serving challenge pages.
-		if metrics.ChallengeStrike(clientIP(r)) > banStrikes {
+		if ip := clientIP(r); metrics.ChallengeStrike(ip) > banStrikes {
 			metrics.Incr("challenge_banned")
+			metrics.Blackhole(ip) // escalate a confirmed flooder to an L3 host drop
 			w.WriteHeader(http.StatusTooManyRequests)
 			return nil
 		}

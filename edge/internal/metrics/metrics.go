@@ -104,6 +104,30 @@ func UnderAttackActive() bool {
 	return v
 }
 
+// BlackholeKey is the Redis sorted set of IPs to drop at L3 (score = unix expiry).
+// The control plane serves it and a host-side agent applies it to nftables, since
+// the edge runs in a container and can't touch the host firewall itself.
+const BlackholeKey = "aegis:blackhole"
+
+// blackholeTTL is how long an auto-banned IP stays in the L3 drop list. Kept
+// short so a shared/NAT IP recovers quickly once the flood from it stops.
+const blackholeTTL = 10 * time.Minute
+
+// Blackhole records an IP for host-level L3 dropping (fire-and-forget). Only the
+// worst offenders (already auto-banned at L7) reach here.
+func Blackhole(ip string) {
+	c := get()
+	if c == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		score := float64(time.Now().Add(blackholeTTL).Unix())
+		_ = c.ZAdd(ctx, BlackholeKey, redis.Z{Score: score, Member: ip}).Err()
+	}()
+}
+
 // challengeStrikeWindow is how long per-IP challenge strikes accumulate before
 // the counter resets (giving a formerly-abusive IP another chance).
 const challengeStrikeWindow = 2 * time.Minute
