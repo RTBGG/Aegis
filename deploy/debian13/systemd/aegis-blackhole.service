@@ -1,0 +1,9 @@
+[Unit]
+Description=Aegis — sync auto-banned IPs into the nftables blackhole set
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/aegis-blackhole
+ExecStart=/usr/local/bin/aegis-blackhole-sync

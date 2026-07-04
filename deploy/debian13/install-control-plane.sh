@@ -112,6 +112,22 @@ elif [ -f deploy/debian13/nftables/allinone.nft ]; then
   else
     ylw "Could not enable nftables automatically; review /etc/nftables.conf and run: nft -f /etc/nftables.conf"
   fi
+
+  # L3 auto-blackhole: a host-side timer syncs the control plane's auto-ban list
+  # (IPs the edge banned during a flood) into the nftables 'aegis' blackhole set.
+  grn "Installing L3 auto-blackhole sync…"
+  install -m 0755 deploy/debian13/blackhole-sync.sh /usr/local/bin/aegis-blackhole-sync
+  ( umask 077; cat > /etc/default/aegis-blackhole <<EOF
+AEGIS_BLACKHOLE_URL=http://127.0.0.1:8080/edge/v1/blackhole
+AEGIS_AGENT_TOKEN=$(grep '^AGENT_TOKEN=' .env | cut -d= -f2-)
+EOF
+  )
+  install -m 0644 deploy/debian13/systemd/aegis-blackhole.service /etc/systemd/system/aegis-blackhole.service
+  install -m 0644 deploy/debian13/systemd/aegis-blackhole.timer /etc/systemd/system/aegis-blackhole.timer
+  systemctl daemon-reload
+  systemctl enable --now aegis-blackhole.timer >/dev/null 2>&1 \
+    && grn "L3 auto-blackhole active (aegis-blackhole.timer, every 30s)." \
+    || ylw "Could not enable aegis-blackhole.timer; enable it manually."
 fi
 
 grn "Done. Dashboard: $(grep '^CONTROL_PLANE_URL=' .env | cut -d= -f2-)"

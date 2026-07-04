@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/auth"
@@ -173,6 +175,30 @@ func (s *Service) SetUnderAttack(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.Store.Audit(r.Context(), nil, &actor.ID, action, "", "", nil)
 	web.JSON(w, http.StatusOK, map[string]any{"enabled": in.Enabled})
+}
+
+// --- L3 blackhole (auto-banned IPs, applied to the host nftables set) ---
+
+// blackholeKey mirrors the edge's metrics.BlackholeKey: a Redis sorted set of
+// IPs to drop at L3, scored by unix expiry. The edge (which shares this Redis)
+// adds confirmed flooders; the host-side sync agent fetches this list.
+const blackholeKey = "aegis:blackhole"
+
+// Blackhole serves the current L3 drop list (one IP per line) for the host-side
+// nftables sync agent, pruning entries whose expiry has passed. Edge-authenticated.
+func (s *Service) Blackhole(w http.ResponseWriter, r *http.Request) {
+	now := strconv.FormatInt(time.Now().Unix(), 10)
+	// Remove expired entries (score < now), then return the rest (score >= now).
+	_ = s.Store.Redis.ZRemRangeByScore(r.Context(), blackholeKey, "-inf", "("+now).Err()
+	ips, err := s.Store.Redis.ZRangeByScore(r.Context(), blackholeKey, &redis.ZRangeBy{Min: now, Max: "+inf"}).Result()
+	if err != nil {
+		web.Error(w, http.StatusInternalServerError, "internal", "could not read blackhole")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	for _, ip := range ips {
+		_, _ = w.Write([]byte(ip + "\n"))
+	}
 }
 
 // --- edge fleet ---

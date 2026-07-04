@@ -73,6 +73,7 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/config", d.Edge.Config)
 		r.Post("/telemetry", d.Edge.Telemetry)
 		r.Post("/events", d.Edge.Events)
+		r.Get("/blackhole", d.Admin.Blackhole) // L3 drop list for the host nft sync agent
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
