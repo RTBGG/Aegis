@@ -61,6 +61,46 @@ func RequestRate(ip string) int {
 	return int(n)
 }
 
+// challengeStrikeWindow is how long per-IP challenge strikes accumulate before
+// the counter resets (giving a formerly-abusive IP another chance).
+const challengeStrikeWindow = 2 * time.Minute
+
+// ChallengeStrike increments and returns the count of challenges served to an IP
+// without it ever solving one (the counter is cleared on success via
+// ClearChallengeStrikes). Callers use it to auto-ban clients that repeatedly get
+// challenged but never pass. Best-effort: returns 0 if Redis is unavailable.
+func ChallengeStrike(ip string) int64 {
+	c := get()
+	if c == nil {
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	key := "aegis:chal:" + ip
+	n, err := c.Incr(ctx, key).Result()
+	if err != nil {
+		return 0
+	}
+	if n == 1 {
+		c.Expire(ctx, key, challengeStrikeWindow)
+	}
+	return n
+}
+
+// ClearChallengeStrikes resets an IP's strike counter (called when it solves a
+// challenge), so a shared/NAT IP is un-banned as soon as any client behind it passes.
+func ClearChallengeStrikes(ip string) {
+	c := get()
+	if c == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		_ = c.Del(ctx, "aegis:chal:"+ip).Err()
+	}()
+}
+
 // Incr increments a named counter without blocking the request path.
 func Incr(name string) {
 	c := get()
