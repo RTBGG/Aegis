@@ -1,0 +1,55 @@
+# Aegis — data plane: the node-agent + Caddy edge (JA4, rate-limit, Coraza/CRS,
+# bot score, challenge, cache, reverse proxy).
+#
+# Requires the control plane (config API) and Redis. In all-in-one mode these
+# are reached over the shared compose network. For a remote edge on another
+# host, use the enrollment script from Admin → Edge servers instead
+# (<CONTROL_PLANE_URL>/install/edge.sh), which sets the per-node token and mTLS
+# certs and runs the published edge image.
+services:
+  caddy-edge:
+    build:
+      context: ../..
+      dockerfile: deploy/caddy/Dockerfile
+    environment:
+      CONTROL_PLANE_URL: ${EDGE_CONTROL_PLANE_URL:-http://api:8080}
+      AGENT_TOKEN: ${AGENT_TOKEN}
+      EDGE_NAME: ${EDGE_NAME:-local-edge}
+      EDGE_PUBLIC_IP: ${EDGE_PUBLIC_IP}
+      AEGIS_REDIS: ${EDGE_REDIS_ADDR:-redis:6379}
+      CHALLENGE_SECRET: ${CHALLENGE_SECRET}
+      ACME_EMAIL: ${ACME_EMAIL}
+      CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-cp.localtest.me}
+      CP_TLS: ${CP_TLS:-internal}
+      CP_RATE_LIMIT_RPM: ${CP_RATE_LIMIT_RPM:-12000}
+      CP_BOT_SENSITIVITY: ${CP_BOT_SENSITIVITY:-low}
+      CP_WAF_ENGINE: ${CP_WAF_ENGINE:-DetectionOnly}
+      CP_UNDER_ATTACK: ${CP_UNDER_ATTACK:-auto}
+      CP_API_UPSTREAM: ${EDGE_CP_API_UPSTREAM:-api:8080}
+      CP_DASH_UPSTREAM: ${EDGE_CP_DASH_UPSTREAM:-dashboard:3000}
+      # Host-RAM-relative caps (computed by deploy/debian13/mem-limits.sh).
+      GOMEMLIMIT: ${CADDY_GOMEMLIMIT:-1024MiB}
+      # mTLS for remote/per-node edges (unused for the local HTTP edge API).
+      EDGE_CERT_FILE: ${EDGE_CERT_FILE:-}
+      EDGE_KEY_FILE: ${EDGE_KEY_FILE:-}
+      EDGE_CA_FILE: ${EDGE_CA_FILE:-}
+    depends_on:
+      api:
+        condition: service_started
+      dashboard:
+        condition: service_started
+      redis:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../caddy/Caddyfile.base:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    mem_limit: ${CADDY_MEM_LIMIT:-1536m}
+    restart: unless-stopped
+
+volumes:
+  caddydata:
+  caddyconfig:

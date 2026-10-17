@@ -11,6 +11,7 @@ export interface User {
 export interface Domain {
   id: string;
   name: string;
+  dns_mode: "ns" | "cname";
   status: "pending" | "active" | "disabled";
   paused: boolean;
   verified_at: string | null;

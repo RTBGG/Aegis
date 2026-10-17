@@ -16,6 +16,7 @@ import (
 type domainDTO struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
+	DNSMode    string     `json:"dns_mode"`
 	Status     string     `json:"status"`
 	Paused     bool       `json:"paused"`
 	VerifiedAt *time.Time `json:"verified_at"`
@@ -23,7 +24,7 @@ type domainDTO struct {
 }
 
 func toDomainDTO(d *store.Domain) domainDTO {
-	return domainDTO{ID: d.ID.String(), Name: d.Name, Status: d.Status, Paused: d.Paused, VerifiedAt: d.VerifiedAt, CreatedAt: d.CreatedAt}
+	return domainDTO{ID: d.ID.String(), Name: d.Name, DNSMode: d.DNSMode, Status: d.Status, Paused: d.Paused, VerifiedAt: d.VerifiedAt, CreatedAt: d.CreatedAt}
 }
 
 func (s *Service) loadOwnedDomain(w http.ResponseWriter, r *http.Request) (*store.Domain, bool) {
@@ -58,7 +59,8 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request) {
 func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 	u := auth.MustUser(r.Context())
 	var in struct {
-		Name string `json:"name"`
+		Name    string `json:"name"`
+		DNSMode string `json:"dns_mode"`
 	}
 	if err := web.Decode(w, r, &in); err != nil {
 		web.Error(w, http.StatusBadRequest, "bad_request", err.Error())
@@ -69,26 +71,41 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, http.StatusBadRequest, "validation", "invalid domain name")
 		return
 	}
+	mode := strings.ToLower(strings.TrimSpace(in.DNSMode))
+	if mode == "" {
+		mode = "ns"
+	}
+	if !validDNSMode(mode) {
+		web.Error(w, http.StatusBadRequest, "validation", "dns_mode must be 'ns' or 'cname'")
+		return
+	}
 	if _, err := s.Store.GetDomainByName(r.Context(), name); err == nil {
 		web.Error(w, http.StatusConflict, "domain_taken", "domain already registered")
 		return
 	}
 	token := "aegis-verify-" + uuid.NewString()
-	d, err := s.Store.CreateDomain(r.Context(), u.AccountID, name, token)
+	d, err := s.Store.CreateDomain(r.Context(), u.AccountID, name, token, mode)
 	if err != nil {
 		web.Error(w, http.StatusInternalServerError, "internal", "could not create domain")
 		return
 	}
-	if err := s.DNS.EnsureZone(r.Context(), name, []string{s.Cfg.AssignedNS[0], s.Cfg.AssignedNS[1]}); err != nil {
-		web.Error(w, http.StatusBadGateway, "dns_error", "could not create DNS zone: "+err.Error())
-		return
+	// Only NS-connected domains get an authoritative zone in PowerDNS. CNAME
+	// domains keep DNS at their own provider; the edge config is rendered from
+	// the records below.
+	if mode == "ns" {
+		if err := s.DNS.EnsureZone(r.Context(), name, []string{s.Cfg.AssignedNS[0], s.Cfg.AssignedNS[1]}); err != nil {
+			web.Error(w, http.StatusBadGateway, "dns_error", "could not create DNS zone: "+err.Error())
+			return
+		}
 	}
 	_, _ = s.Store.GetOrCreatePolicy(r.Context(), d.ID)
-	_ = s.Store.Audit(r.Context(), &u.AccountID, &u.ID, "domain.create", name, "", nil)
+	_ = s.Store.Audit(r.Context(), &u.AccountID, &u.ID, "domain.create", name, "", map[string]any{"dns_mode": mode})
 
 	web.JSON(w, http.StatusCreated, map[string]any{
-		"domain":      toDomainDTO(d),
-		"nameservers": []string{s.Cfg.AssignedNS[0], s.Cfg.AssignedNS[1]},
+		"domain":       toDomainDTO(d),
+		"dns_mode":     d.DNSMode,
+		"nameservers":  []string{s.Cfg.AssignedNS[0], s.Cfg.AssignedNS[1]},
+		"cname_target": s.Cfg.CNAMETarget,
 		"verification": map[string]string{
 			"txt_name":  "_aegis-challenge." + name,
 			"txt_value": token,
@@ -102,8 +119,10 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.JSON(w, http.StatusOK, map[string]any{
-		"domain":      toDomainDTO(d),
-		"nameservers": []string{s.Cfg.AssignedNS[0], s.Cfg.AssignedNS[1]},
+		"domain":       toDomainDTO(d),
+		"dns_mode":     d.DNSMode,
+		"nameservers":  []string{s.Cfg.AssignedNS[0], s.Cfg.AssignedNS[1]},
+		"cname_target": s.Cfg.CNAMETarget,
 		"verification": map[string]string{
 			"txt_name":  "_aegis-challenge." + d.Name,
 			"txt_value": d.VerificationToken,
@@ -156,7 +175,9 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	_ = s.DNS.DeleteZone(r.Context(), d.Name)
+	if d.DNSMode == "ns" {
+		_ = s.DNS.DeleteZone(r.Context(), d.Name)
+	}
 	if err := s.Store.DeleteDomain(r.Context(), d.ID); err != nil {
 		web.Error(w, http.StatusInternalServerError, "internal", "could not delete domain")
 		return

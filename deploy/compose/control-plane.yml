@@ -1,0 +1,36 @@
+# Aegis — control plane: Go API (auth, domains, DNS, security, analytics, edge
+# API) plus the Next.js dashboard.
+# Requires base.yml (PostgreSQL/Redis/ClickHouse) and dns.yml (the API renders
+# zones through PowerDNS).
+services:
+  api:
+    build:
+      context: ../../control-plane
+    env_file: ../../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      powerdns:
+        condition: service_started
+      clickhouse:
+        condition: service_started
+    ports:
+      - "8080:8080"
+      - "8443:8443" # edge mTLS listener (per-node client certs)
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ../../dashboard
+      # Baked into the Next.js routes-manifest at build time (see dashboard/Dockerfile).
+      args:
+        API_PROXY: http://api:8080
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    restart: unless-stopped

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/config"
@@ -21,16 +22,30 @@ type Service struct {
 	DNS    *dns.Client
 	Cfg    *appcfg.Config
 	Render *config.Renderer
+
+	// Resolver performs DNS lookups for domain verification (net.DefaultResolver
+	// in production; injectable for tests). VerifyRetry spaces the retries used
+	// to tolerate DNS propagation delays.
+	Resolver    Resolver
+	VerifyRetry time.Duration
 }
 
 func New(st *store.Store, d *dns.Client, cfg *appcfg.Config, r *config.Renderer) *Service {
-	return &Service{Store: st, DNS: d, Cfg: cfg, Render: r}
+	return &Service{
+		Store: st, DNS: d, Cfg: cfg, Render: r,
+		Resolver: net.DefaultResolver, VerifyRetry: time.Second,
+	}
 }
 
 var domainNameRe = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
 
 func validDomainName(name string) bool {
 	return len(name) <= 253 && domainNameRe.MatchString(name)
+}
+
+// validDNSMode reports whether a domain's connection mode is supported.
+func validDNSMode(mode string) bool {
+	return mode == "ns" || mode == "cname"
 }
 
 func isProxied(r store.DNSRecord) bool {
@@ -124,6 +139,11 @@ type rrKey struct{ name, typ string }
 // syncZone reconciles all of a domain's records into PowerDNS. Proxied records
 // are published as A records pointing at the edge pool.
 func (s *Service) syncZone(ctx context.Context, domain *store.Domain) error {
+	// CNAME-connected domains keep DNS at their own provider; Aegis only renders
+	// the edge config, so there is no authoritative zone to reconcile.
+	if domain.DNSMode == "cname" {
+		return nil
+	}
 	// Self-heal: ensure the zone exists (e.g. if PowerDNS was down at creation).
 	if err := s.DNS.EnsureZone(ctx, domain.Name, []string{s.Cfg.AssignedNS[0], s.Cfg.AssignedNS[1]}); err != nil {
 		return err
@@ -211,22 +231,4 @@ func publishedType(r store.DNSRecord) string {
 		return "LUA"
 	}
 	return r.Type
-}
-
-// verify checks whether the domain delegates to our nameservers. In internal
-// (dev) TLS mode it auto-verifies so the local demo can proceed.
-func (s *Service) verify(ctx context.Context, domain *store.Domain) (bool, string) {
-	resolver := net.Resolver{}
-	if nss, err := resolver.LookupNS(ctx, domain.Name); err == nil {
-		for _, ns := range nss {
-			h := dns.Host(ns.Host)
-			if h == dns.Host(s.Cfg.AssignedNS[0]) || h == dns.Host(s.Cfg.AssignedNS[1]) {
-				return true, "ns_delegated"
-			}
-		}
-	}
-	if s.Cfg.EdgeTLSMode == "internal" {
-		return true, "dev_auto_verify"
-	}
-	return false, "ns_not_delegated"
 }

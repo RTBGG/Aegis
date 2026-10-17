@@ -1,11 +1,28 @@
 package domains
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aegis/control-plane/internal/appcfg"
 	"github.com/aegis/control-plane/internal/store"
 )
+
+func TestValidDomainName(t *testing.T) {
+	valid := []string{"example.com", "app.example.com", "a-b.example.co.uk", "xn--bcher-kva.example"}
+	for _, n := range valid {
+		if !validDomainName(n) {
+			t.Errorf("validDomainName(%q) = false, want true", n)
+		}
+	}
+	invalid := []string{"", "example", "example.", "-bad.example.com", "bad-.example.com",
+		"bad_.example.com", "exa mple.com", "example..com", strings.Repeat("a", 64) + ".com"}
+	for _, n := range invalid {
+		if validDomainName(n) {
+			t.Errorf("validDomainName(%q) = true, want false", n)
+		}
+	}
+}
 
 func TestLuaWeighted(t *testing.T) {
 	s := &Service{Cfg: &appcfg.Config{EdgePublicIP: "127.0.0.1"}}

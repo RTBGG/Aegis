@@ -1,0 +1,62 @@
+# Aegis — shared stateful infrastructure: PostgreSQL (control-plane truth +
+# PowerDNS gpgsql), Redis (sessions/rate-limit/cache/pubsub) and ClickHouse
+# (optional per-request analytics).
+#
+# Used by the all-in-one compose file (included) and directly in modular mode.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PDNS_DB_NAME: ${PDNS_DB_NAME}
+      PDNS_DB_USER: ${PDNS_DB_USER}
+      PDNS_DB_PASSWORD: ${PDNS_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+      - ../postgres/pdns-gpgsql-schema.sql:/pdns-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - chdata:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    # Host-RAM-relative cap (see deploy/debian13/mem-limits.sh). Prevent a big
+    # merge/query from consuming the whole host; override in .env if needed.
+    mem_limit: ${CLICKHOUSE_MEM_LIMIT:-1024m}
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  chdata:

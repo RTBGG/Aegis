@@ -1,0 +1,22 @@
+# Aegis — DNS plane: PowerDNS Authoritative with the gpgsql + GeoIP backends.
+# Requires base.yml (PostgreSQL) and the control plane (which drives its API).
+services:
+  powerdns:
+    build:
+      context: ../powerdns
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../powerdns/pdns.conf:/etc/powerdns/pdns.conf:ro
+    command:
+      - "--gpgsql-dbname=${PDNS_DB_NAME}"
+      - "--gpgsql-user=${PDNS_DB_USER}"
+      - "--gpgsql-password=${PDNS_DB_PASSWORD}"
+      - "--api-key=${PDNS_API_KEY}"
+      - "--default-soa-content=${ASSIGNED_NS1:-ns1.localhost} hostmaster.${ASSIGNED_NS1:-ns1.localhost} 0 10800 3600 604800 3600"
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+    restart: unless-stopped

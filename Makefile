@@ -19,9 +19,25 @@ env: ## Create .env from .env.example if missing
 
 # --- Docker stack ----------------------------------------------------------
 .PHONY: up
-up: env ## Build + start the all-in-one stack
+up: env ## Build + start the all-in-one stack (Mode A)
 	@bash deploy/debian13/ensure-mem-limits.sh
 	$(COMPOSE) up -d --build
+
+# Mode B: the same modular service definitions, without the dev extras.
+MODULAR := --project-name aegis --env-file $(CURDIR)/.env -f deploy/compose/base.yml -f deploy/compose/dns.yml -f deploy/compose/control-plane.yml -f deploy/compose/edge.yml
+
+.PHONY: up-modular
+up-modular: env ## Build + start the modular stack on this host (no dev extras)
+	@bash deploy/debian13/ensure-mem-limits.sh
+	$(COMPOSE) $(MODULAR) up -d --build
+
+.PHONY: down-modular
+down-modular: ## Stop the modular stack (keeps volumes)
+	$(COMPOSE) $(MODULAR) down
+
+.PHONY: compose-check
+compose-check: ## Validate the all-in-one and modular compose configurations
+	@bash deploy/compose/validate.sh
 
 .PHONY: mem-limits
 mem-limits: ## Show the host-RAM-relative memory limits for this server

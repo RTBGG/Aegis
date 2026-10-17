@@ -30,6 +30,7 @@ type Domain struct {
 	ID                uuid.UUID  `db:"id"`
 	AccountID         uuid.UUID  `db:"account_id"`
 	Name              string     `db:"name"`
+	DNSMode           string     `db:"dns_mode"` // "ns" (delegated) | "cname" (external DNS)
 	Status            string     `db:"status"`
 	Paused            bool       `db:"paused"`
 	VerificationToken string     `db:"verification_token"`

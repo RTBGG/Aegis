@@ -35,6 +35,11 @@ type Config struct {
 	PDNSAPIKey string
 	AssignedNS [2]string
 
+	// CNAMETarget is the hostname customers point their CNAME/ALIAS/ANAME
+	// records at when connecting a domain without delegating nameservers. It
+	// must resolve to the edge; it defaults to the control-plane host.
+	CNAMETarget string
+
 	EdgePublicIP    string
 	EdgeTLSMode     string // "internal" | "acme"
 	ACMEEmail       string
@@ -158,6 +163,12 @@ func Load() (*Config, error) {
 
 	// Derive mTLS server SANs + the URL edges dial from the control-plane host.
 	cpHost := hostOf(c.ControlPlaneURL)
+
+	// CNAME target for externally-managed DNS (CNAME/ALIAS/ANAME mode). The
+	// control-plane host already resolves to the edge, so it is a safe default;
+	// set CNAME_TARGET to a dedicated hostname (e.g. edge.example.com) if you
+	// prefer. It only needs to resolve to the edge — it is not used for TLS.
+	c.CNAMETarget = env("CNAME_TARGET", cpHost)
 
 	// Default the authoritative nameservers to ns1/ns2 of the registrable
 	// domain of the control-plane host, so cp.example.com, panel.example.com

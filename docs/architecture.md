@@ -16,11 +16,11 @@ customer traffic).
                         ▼                       ▼
                  ┌─────────────┐        ┌──────────────── Edge ───────────────┐
    visitor DNS ─▶│  PowerDNS   │ visitor│ nftables → Caddy:                   │
-                 │ (gpgsql)    │  HTTPS ▶│  ja4 → rate_limit → botscore →      │
-                 └─────────────┘        │  challenge → coraza(CRS) → cache →  │
-                                        │  reverse_proxy → origin             │
-                                        │ node-agent (writes Caddyfile, reload)│
-                                        └──────────────────────────────────────┘
+                  │ (gpgsql)    │  HTTPS ▶│  ja4 → rate_limit → coraza(CRS) →   │
+                  └─────────────┘        │  botscore → challenge → cache →     │
+                                         │  reverse_proxy → origin             │
+                                         │ node-agent (writes Caddyfile, reload)│
+                                         └──────────────────────────────────────┘
 ```
 
 ## Source of truth & config flow
@@ -160,10 +160,32 @@ config bundle.
 ## Request pipeline (edge)
 
 `nftables (L3/4)` → `ja4` (JA4H fingerprint → `{http.vars.ja4h}`) →
-`rate_limit` (per-IP) → `botscore` (heuristics + per-IP rate → block / flag) →
-`challenge` (PoW interstitial for flagged clients) → `coraza_waf` (OWASP CRS) →
-`cache` (Souin) → `reverse_proxy` (health-checked origin pool). Automatic HTTPS
-and HTTP→HTTPS are Caddy defaults.
+`rate_limit` (per-IP) → `coraza_waf` (OWASP CRS) → `botscore` (heuristics +
+per-IP rate → block / flag) → `challenge` (PoW interstitial for flagged clients,
+or everyone in Under Attack Mode) → `cache` (Souin) → `reverse_proxy`
+(health-checked origin pool). Automatic HTTPS and HTTP→HTTPS are Caddy defaults.
+
+## Domain connection modes (NS vs CNAME)
+
+`domains.dns_mode` selects how a customer connects a zone:
+
+- **`ns`** (default, original behaviour): Aegis is authoritative. Creating the
+  domain calls PowerDNS `EnsureZone`, `syncZone` reconciles records, and
+  verification checks that the zone's NS records include one of our nameservers
+  (`LookupNS`).
+- **`cname`**: DNS stays at the customer's provider. No PowerDNS zone is created
+  or reconciled (`syncZone` is a no-op). The customer points CNAME records
+  (ALIAS/ANAME at the apex) at `CNAME_TARGET`, and routing is driven entirely by
+  the proxied records rendered into the edge Caddyfile. Verification proves
+  ownership via the `_aegis-challenge.<domain>` TXT token, or via a CNAME from
+  the registered host to `CNAME_TARGET`; both retry to tolerate DNS propagation.
+
+In both modes the rendered edge site is keyed by the record's hostname, so the
+edge selects the site by the exact `Host` header / TLS SNI. Only **active**
+domains and their **proxied** records are rendered; unknown or forged hosts get
+no site. TLS is handled by Caddy (ACME when `EDGE_TLS_MODE=acme`, local CA for
+`internal`). A CNAME alone issues no certificate — the hostname must resolve to
+the edge for ACME to succeed. See `docs/cname-domains.md`.
 
 ## Components
 
@@ -173,7 +195,27 @@ and HTTP→HTTPS are Caddy defaults.
 | `edge/modules/{ja4,botscore,challenge}` | Custom Caddy v2 handlers |
 | `node-agent/` | Manages Caddy on each edge: config sync + telemetry |
 | `dashboard/` | Next.js + Tailwind UI + admin |
-| `deploy/` | xcaddy Dockerfile + base Caddyfile, Postgres/PowerDNS init, Debian 13 scripts, nftables |
+| `deploy/` | xcaddy Dockerfile + base Caddyfile, Postgres/PowerDNS init, Debian 13 scripts, nftables, modular compose files (`deploy/compose/`) |
+
+## Deployment topology (all-in-one vs modular)
+
+The service definitions live in `deploy/compose/` (`base`, `dns`,
+`control-plane`, `edge`, `dev`). The root `docker-compose.yml` is **Mode A** and
+merely `include`s all of them. **Mode B** starts the same files selectively:
+
+```bash
+# all-in-one
+docker compose up -d --build
+# modular: shared infra + DNS + control plane + edge (no dev extras)
+docker compose -p aegis --env-file "$PWD/.env" \
+  -f deploy/compose/base.yml -f deploy/compose/dns.yml \
+  -f deploy/compose/control-plane.yml -f deploy/compose/edge.yml up -d --build
+```
+
+Both modes use the project name `aegis` and the same named volumes, so switching
+modes preserves data and secrets. Remote edges are provisioned independently via
+the enrollment script (per-node token + mTLS), not by this compose network. See
+`docs/modular-deployment.md`.
 
 ## Deviations from the original plan (Phase 1, pragmatic)
 

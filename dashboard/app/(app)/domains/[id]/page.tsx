@@ -13,6 +13,7 @@ const canProxy = (t: string) => ["A", "AAAA", "CNAME"].includes(t);
 interface DomainDetailResp {
   domain: Domain;
   nameservers: string[];
+  cname_target: string;
   verification: { txt_name: string; txt_value: string };
 }
 
@@ -21,6 +22,7 @@ export default function DomainDetail() {
   const router = useRouter();
   const [domain, setDomain] = useState<Domain | null>(null);
   const [nameservers, setNameservers] = useState<string[]>([]);
+  const [cnameTarget, setCnameTarget] = useState("");
   const [verification, setVerification] = useState<{ txt_name: string; txt_value: string } | null>(null);
   const [tab, setTab] = useState<Tab>("dns");
   const [msg, setMsg] = useState("");
@@ -31,6 +33,7 @@ export default function DomainDetail() {
       .then((r) => {
         setDomain(r.domain);
         setNameservers(r.nameservers ?? []);
+        setCnameTarget(r.cname_target ?? "");
         setVerification(r.verification ?? null);
       })
       .catch(() => {});
@@ -63,6 +66,7 @@ export default function DomainDetail() {
           <h1 className="text-2xl font-semibold">{domain.name}</h1>
           <div className="mt-1 flex items-center gap-2">
             <Badge tone={domain.status === "active" ? "green" : "amber"}>{domain.status}</Badge>
+            <Badge tone="slate">{domain.dns_mode === "cname" ? "CNAME" : "NS"}</Badge>
             {domain.paused && <Badge tone="amber">paused</Badge>}
           </div>
         </div>
@@ -80,25 +84,54 @@ export default function DomainDetail() {
         <Card title="Domain verification">
           <div className="space-y-4 text-sm">
             <p className="text-slate-400">
-              This domain isn&apos;t verified yet. Use <span className="text-slate-200">either</span> option below, then click
-              Verify.
+              This domain isn&apos;t verified yet.{" "}
+              {domain.dns_mode === "cname"
+                ? "Point the hostnames you want proxied at Aegis, add the ownership TXT record, then click Verify."
+                : "Delegate the nameservers (or add the TXT record), then click Verify."}
             </p>
-            <div>
-              <div className="mb-1 text-xs uppercase text-slate-500">Option 1 — delegate nameservers</div>
-              <p className="mb-2 text-slate-400">Set these as the domain&apos;s nameservers at your registrar:</p>
-              <ul className="font-mono text-accent">
-                {nameservers.map((ns) => (
-                  <li key={ns}>{ns}</li>
-                ))}
-              </ul>
-            </div>
-            {verification && (
-              <div>
-                <div className="mb-1 text-xs uppercase text-slate-500">Option 2 — add a TXT record</div>
-                <pre className="overflow-x-auto rounded-lg border border-edge bg-black/40 p-3 text-xs text-slate-300">
-                  {`${verification.txt_name}  TXT  ${verification.txt_value}`}
-                </pre>
-              </div>
+            {domain.dns_mode === "cname" ? (
+              <>
+                <div>
+                  <div className="mb-1 text-xs uppercase text-slate-500">Point a CNAME at Aegis</div>
+                  <p className="mb-2 text-slate-400">
+                    For each hostname you want proxied, create a CNAME (or ALIAS/ANAME at the apex) to:
+                  </p>
+                  <ul className="font-mono text-accent">
+                    <li>{cnameTarget}</li>
+                  </ul>
+                  <p className="mt-1 text-xs text-slate-500">
+                    A plain CNAME cannot be used at the apex; use ALIAS/ANAME there, or onboard a subdomain instead.
+                  </p>
+                </div>
+                {verification && (
+                  <div>
+                    <div className="mb-1 text-xs uppercase text-slate-500">Ownership proof — TXT record</div>
+                    <pre className="overflow-x-auto rounded-lg border border-edge bg-black/40 p-3 text-xs text-slate-300">
+                      {`${verification.txt_name}  TXT  ${verification.txt_value}`}
+                    </pre>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div>
+                  <div className="mb-1 text-xs uppercase text-slate-500">Option 1 — delegate nameservers</div>
+                  <p className="mb-2 text-slate-400">Set these as the domain&apos;s nameservers at your registrar:</p>
+                  <ul className="font-mono text-accent">
+                    {nameservers.map((ns) => (
+                      <li key={ns}>{ns}</li>
+                    ))}
+                  </ul>
+                </div>
+                {verification && (
+                  <div>
+                    <div className="mb-1 text-xs uppercase text-slate-500">Option 2 — add a TXT record</div>
+                    <pre className="overflow-x-auto rounded-lg border border-edge bg-black/40 p-3 text-xs text-slate-300">
+                      {`${verification.txt_name}  TXT  ${verification.txt_value}`}
+                    </pre>
+                  </div>
+                )}
+              </>
             )}
             <div className="flex items-center gap-3">
               <Button onClick={verify}>Verify</Button>
@@ -106,6 +139,14 @@ export default function DomainDetail() {
             </div>
           </div>
         </Card>
+      )}
+
+      {domain.dns_mode === "cname" && (
+        <div className="rounded-lg border border-edge bg-panel/40 p-3 text-sm text-slate-300">
+          DNS stays at your provider. Create a CNAME (ALIAS/ANAME at the apex) for each proxied hostname pointing to{" "}
+          <span className="font-mono text-accent">{cnameTarget}</span>. TLS certificates are issued automatically once it
+          resolves to the edge.
+        </div>
       )}
 
       <div className="flex gap-1 border-b border-edge">

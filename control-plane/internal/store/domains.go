@@ -7,10 +7,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *Store) CreateDomain(ctx context.Context, accountID uuid.UUID, name, verificationToken string) (*Domain, error) {
+func (s *Store) CreateDomain(ctx context.Context, accountID uuid.UUID, name, verificationToken, dnsMode string) (*Domain, error) {
 	rows, err := s.Pool.Query(ctx,
-		`INSERT INTO domains (account_id, name, verification_token) VALUES ($1,$2,$3) RETURNING *`,
-		accountID, name, verificationToken)
+		`INSERT INTO domains (account_id, name, verification_token, dns_mode) VALUES ($1,$2,$3,$4) RETURNING *`,
+		accountID, name, verificationToken, dnsMode)
 	if err != nil {
 		return nil, err
 	}

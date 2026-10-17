@@ -2,13 +2,15 @@
 
 > Self-hosted, Cloudflare-style edge platform: per-domain DNS, a reverse proxy with automatic TLS, WAF (Coraza + OWASP CRS), rate-limiting, and bot/DDoS protection — managed from a multi-tenant dashboard.
 
-**Aegis** lets you point a domain's nameservers at your own infrastructure and flip a
+**Aegis** lets you point a domain's nameservers at your own infrastructure — or
+keep DNS at your provider and connect the domain with a **CNAME** — then flip a
 per-record "proxy" switch to route traffic through an edge that adds automatic SSL/TLS
 and HTTP→HTTPS, a Web Application Firewall (OWASP Core Rule Set via Coraza), customizable
 rate-limiting, JA4(H) fingerprinting, proof-of-work bot challenges, caching, and
 health-checked origin load-balancing. A Go control plane (PostgreSQL source of truth)
 drives PowerDNS for authoritative DNS and renders config to a Caddy data plane via a
-lightweight node-agent. Deploys all-in-one on Debian 13 with Docker Compose.
+lightweight node-agent. Deploys all-in-one or as independent components on Debian 13
+with Docker Compose.
 
 > **Status:** Phase 1 (foundation + security stack) and Phase 2 (depth) are complete;
 > Phase 3 (scale-out) is well underway. Built: threat-feed auto-blocklists, DNSSEC,
@@ -60,6 +62,9 @@ visitor ──TLS──> host nftables (L3/4) → Caddy edge:
 - Edge caching (Souin) and health-checked origin load-balancing
 
 **DNS**
+- Two domain connection modes: **delegate nameservers** (Aegis hosts the zone) or
+  **keep DNS at your provider** and point CNAME (ALIAS/ANAME at the apex) records
+  at an Aegis target — domain ownership is proven with a TXT challenge
 - Authoritative per-domain DNS with a per-record "proxy" toggle
 - One-click DNSSEC (publish the generated DS record at your registrar)
 - Weighted edge distribution and GeoDNS by client location (continent), client-subnet aware
@@ -96,6 +101,14 @@ Docker + compose, **prompts for the domain** to serve the dashboard/API on
 generates secrets, brings the stack up, and applies the host L3 firewall
 (per-source flood cap) plus the auto-blackhole sync timer. See `docs/runbook-debian13.md`.
 
+Need to run components independently (separate hosts, minimal installs)? The same
+service definitions can be started as separate modules — see
+`docs/modular-deployment.md`. The all-in-one entrypoint simply includes them; both
+modes share the same code, `.env` and volumes.
+
+To connect a domain while keeping DNS at your own provider, see
+`docs/cname-domains.md`.
+
 ## Local compile checks (no Docker)
 
 Toolchains can live in userspace:
@@ -114,8 +127,9 @@ node-agent/      Go agent: config sync + apply to Caddy + telemetry, mTLS + cert
 edge/            Custom Caddy modules: ja4 (JA4H), botscore, challenge (PoW/CAPTCHA)
 dashboard/       Next.js + TS + Tailwind dashboard & admin
 deploy/          Caddy xcaddy build, PowerDNS (gpgsql+geoip) image, docker-compose,
-                 Debian 13 install + edge-enrollment scripts, nftables
-docs/            architecture, plan, threat model, runbook
+                 modular compose files (compose/), Debian 13 install + edge-enrollment
+                 scripts, nftables
+docs/            architecture, plan, threat model, runbook, cname-domains, modular-deployment
 ```
 
 ## Security note

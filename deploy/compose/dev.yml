@@ -1,0 +1,14 @@
+# Aegis — development/demo extras. Not required in production; include this
+# file only for the all-in-one demo or local development.
+services:
+  # Demo origin so a proxied record (content: demo-origin) has a backend to hit.
+  demo-origin:
+    image: traefik/whoami:latest
+    restart: unless-stopped
+
+  # Dev mail catcher (set MAILER=smtp in .env to use). UI on http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+    restart: unless-stopped

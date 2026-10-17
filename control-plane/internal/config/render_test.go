@@ -42,6 +42,15 @@ func renderSite(t *testing.T, p *store.SecurityPolicy) string {
 	return b.String()
 }
 
+func TestWriteSite_KeyedByHost(t *testing.T) {
+	// The site block must be keyed by the record's hostname so the edge selects
+	// it by the request Host/SNI (unknown hosts get no site).
+	out := renderSite(t, &store.SecurityPolicy{BotProtection: "off", ChallengeMode: "pow"})
+	if !strings.HasPrefix(out, "app.example.com {") {
+		t.Fatalf("site block must start with the hostname:\n%s", out)
+	}
+}
+
 func TestWriteSite_UnderAttackChallengesEveryone(t *testing.T) {
 	// Under Attack Mode must challenge every visitor even when bot scoring is
 	// disabled and the "challenge suspicious traffic" toggle is off.
