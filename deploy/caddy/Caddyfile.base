@@ -56,7 +56,7 @@
 			# are the finer layers.
 			rate_limit {
 				zone control_plane {
-					key {http.request.remote_ip}
+					key {http.request.remote.host}
 					events {$CP_RATE_LIMIT_RPM:12000}
 					window 1m
 				}

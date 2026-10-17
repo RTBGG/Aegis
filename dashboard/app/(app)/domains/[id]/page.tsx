@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import type { Domain, DnsRecord, DnssecInfo, SecurityPolicy, WafOverride, Insights, InsightsPoint } from "@/lib/types";
+import type { Domain, DnsRecord, DnssecInfo, SecurityPolicy, WafOverride, Insights, InsightsPoint, LivePoint, LiveResponse } from "@/lib/types";
 import { Button, Input, Select, Field, Card, Badge, Toggle, Textarea, ErrorText } from "@/components/ui";
 
 type Tab = "dns" | "dnssec" | "security" | "analytics";
@@ -385,6 +385,25 @@ function SecurityTab({ domainId }: { domainId: string }) {
       <WAFOverrides domainId={domainId} />
 
 
+      <Card title="Under Attack Mode">
+        <div className="space-y-3">
+          <Toggle
+            checked={p.under_attack}
+            onChange={(v) => set({ under_attack: v, challenge_enabled: v ? true : p.challenge_enabled })}
+            label="Challenge all visitors (I'm under attack)"
+          />
+          <p className="text-xs text-slate-500">
+            Every visitor must clear the challenge before reaching this site — not just traffic flagged as suspicious.
+            Equivalent to Cloudflare&apos;s “I&apos;m under attack” mode. Repeat visitors stay cleared for an hour.
+          </p>
+          {p.under_attack && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">
+              Under Attack Mode is active — every uncleared request is challenged using the challenge type below.
+            </div>
+          )}
+        </div>
+      </Card>
+
       <Card title="Rate limiting & bot protection">
         <div className="space-y-3">
           <Toggle checked={p.rate_limit_enabled} onChange={(v) => set({ rate_limit_enabled: v })} label="Enable rate limiting" />
@@ -406,7 +425,7 @@ function SecurityTab({ domainId }: { domainId: string }) {
             label="Allow verified search-engine bots (Googlebot, Bingbot, …)"
           />
           <Toggle checked={p.challenge_enabled} onChange={(v) => set({ challenge_enabled: v })} label="Challenge suspicious traffic" />
-          {p.challenge_enabled && (
+          {(p.challenge_enabled || p.under_attack) && (
             <div className="space-y-3 rounded-lg border border-edge bg-ink/30 p-3">
               <Field label="Challenge type">
                 <Select value={p.challenge_mode} onChange={(e) => set({ challenge_mode: e.target.value as SecurityPolicy["challenge_mode"] })}>
@@ -605,6 +624,7 @@ function AnalyticsTab({ domainId }: { domainId: string }) {
 
   return (
     <div className="space-y-5">
+      <LiveChart domainId={domainId} />
       <div className="flex justify-end gap-1">
         {(["24h", "7d"] as const).map((wnd) => (
           <button
@@ -704,6 +724,101 @@ function AnalyticsTab({ domainId }: { domainId: string }) {
         </Card>
       </div>
     </div>
+  );
+}
+
+// LiveChart polls the per-second live endpoint and draws a rolling 2-minute
+// "dstat"-style graph of total / passed / blocked requests.
+function LiveChart({ domainId }: { domainId: string }) {
+  const [data, setData] = useState<LiveResponse | null>(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    async function tick() {
+      try {
+        const r = await api.get<LiveResponse>(`/domains/${domainId}/live`);
+        if (alive) {
+          setData(r);
+          setErr("");
+        }
+      } catch (e) {
+        if (alive) setErr(e instanceof ApiError ? e.message : "Live data unavailable");
+      }
+      if (alive) timer = setTimeout(tick, 3000);
+    }
+    tick();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [domainId]);
+
+  const pts = data?.points ?? [];
+  const tail = pts.slice(-10);
+  const avg = (k: keyof LivePoint) => (tail.length ? tail.reduce((a, p) => a + (p[k] as number), 0) / tail.length : 0);
+  const maxY = Math.max(1, ...pts.map((p) => p.total));
+  const W = 760;
+  const H = 190;
+  const pad = 28;
+  const n = pts.length;
+  const x = (i: number) => pad + (i * (W - 2 * pad)) / Math.max(1, n - 1);
+  const y = (v: number) => H - pad - (v * (H - 2 * pad)) / maxY;
+  const line = (sel: (p: LivePoint) => number) =>
+    pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(sel(p)).toFixed(1)}`).join(" ");
+  const fmtT = (t: number) => new Date(t * 1000).toLocaleTimeString([], { minute: "2-digit", second: "2-digit" });
+
+  return (
+    <Card title="Live traffic · past 2 minutes">
+      {data && !data.enabled ? (
+        <p className="text-sm text-slate-400">Live traffic requires ClickHouse analytics (set CLICKHOUSE_URL).</p>
+      ) : pts.length === 0 ? (
+        <p className="text-sm text-slate-400">{err || "Waiting for traffic…"}</p>
+      ) : (
+        <>
+          <div className="mb-3 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
+            <span className="text-slate-300">
+              now <strong className="text-white">{avg("total").toFixed(1)}</strong> req/s
+            </span>
+            <span className="text-emerald-300">
+              passed <strong>{avg("passed").toFixed(1)}</strong>/s
+            </span>
+            <span className="text-red-300">
+              blocked <strong>{avg("blocked").toFixed(1)}</strong>/s
+            </span>
+            <span className="text-slate-500">peak {maxY}/s</span>
+          </div>
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="live requests per second">
+            <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#2b3650" strokeWidth="1" />
+            <path
+              d={`${line((p) => p.total)} L${x(n - 1).toFixed(1)},${H - pad} L${x(0).toFixed(1)},${H - pad} Z`}
+              fill="#5b8cff"
+              fillOpacity="0.12"
+            />
+            <path d={line((p) => p.passed)} fill="none" stroke="#34d399" strokeWidth="1.5" />
+            <path d={line((p) => p.total)} fill="none" stroke="#5b8cff" strokeWidth="2" />
+            <path d={line((p) => p.blocked)} fill="none" stroke="#f87171" strokeWidth="1.5" />
+            <text x={pad} y={H - 8} fill="#9aa6c0" fontSize="10">
+              {fmtT(pts[0].t)}
+            </text>
+            <text x={W / 2} y={H - 8} fill="#9aa6c0" fontSize="10" textAnchor="middle">
+              {fmtT(pts[Math.floor(n / 2)].t)}
+            </text>
+            <text x={W - pad} y={H - 8} fill="#9aa6c0" fontSize="10" textAnchor="end">
+              {fmtT(pts[n - 1].t)}
+            </text>
+          </svg>
+          <div className="mt-2 flex gap-4 text-xs text-slate-400">
+            <Legend color="#5b8cff" label="total" />
+            <Legend color="#34d399" label="passed" />
+            <Legend color="#f87171" label="blocked" />
+            <span className="ml-auto text-slate-600">refreshes every 3s</span>
+          </div>
+          {err && <p className="mt-1 text-xs text-amber-300">{err}</p>}
+        </>
+      )}
+    </Card>
   );
 }
 

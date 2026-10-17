@@ -59,6 +59,7 @@ export interface SecurityPolicy {
   bot_protection: "off" | "low" | "medium" | "high";
   bot_allow_verified: boolean;
   challenge_enabled: boolean;
+  under_attack: boolean;
   challenge_mode: "pow" | "captcha";
   captcha_provider: "" | "turnstile" | "hcaptcha" | "recaptcha";
   captcha_sitekey: string;
@@ -92,6 +93,19 @@ export interface Insights {
   statuses?: { status: number; count: number }[];
   top_countries?: { country: string; count: number }[];
   top_asns?: { asn: number; org: string; count: number }[];
+}
+
+export interface LivePoint {
+  t: number;
+  total: number;
+  blocked: number;
+  passed: number;
+}
+
+export interface LiveResponse {
+  enabled: boolean;
+  window?: string;
+  points?: LivePoint[];
 }
 
 export interface MetricsSummary {

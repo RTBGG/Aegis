@@ -7,10 +7,10 @@ func TestNameserverDefaults(t *testing.T) {
 		host, ns1, ns2 string
 	}{
 		// Bare registrable domain used as the control-plane host.
-		{"rtb.st", "ns1.rtb.st", "ns2.rtb.st"},
+		{"example.com", "ns1.example.com", "ns2.example.com"},
 		// Any subdomain collapses to the registrable domain (eTLD+1).
-		{"cp.rtb.st", "ns1.rtb.st", "ns2.rtb.st"},
-		{"panel.rtb.st", "ns1.rtb.st", "ns2.rtb.st"},
+		{"cp.example.com", "ns1.example.com", "ns2.example.com"},
+		{"panel.example.com", "ns1.example.com", "ns2.example.com"},
 		{"cp.localtest.me", "ns1.localtest.me", "ns2.localtest.me"},
 		{"dashboard.example.com", "ns1.example.com", "ns2.example.com"},
 		{"cpanel.example.com", "ns1.example.com", "ns2.example.com"},

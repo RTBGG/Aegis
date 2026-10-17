@@ -1,6 +1,6 @@
 # Plan: "Aegis" — a self-hosted Cloudflare-style edge platform
 
-> Working name `aegis` (placeholder — rename freely). Greenfield monorepo in a new repo under `/home/rtb/Projekte/aegis`.
+> Working name `aegis` (placeholder — rename freely). Greenfield monorepo in a new repo at `~/projects/aegis`.
 
 ## Context
 

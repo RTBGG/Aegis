@@ -31,7 +31,7 @@ func (s *Store) UpdatePolicy(ctx context.Context, p *SecurityPolicy) (*SecurityP
 			waf_enabled=$4, waf_paranoia=$5, waf_mode=$6, waf_custom_rules=$14,
 			rate_limit_enabled=$7, rate_limit_rpm=$8, rate_limit_burst=$9,
 			cache_enabled=$10, cache_ttl=$11,
-			bot_protection=$12, challenge_enabled=$13,
+			bot_protection=$12, challenge_enabled=$13, under_attack=$20,
 			bot_allow_verified=$15, challenge_mode=$16,
 			captcha_provider=$17, captcha_sitekey=$18,
 			-- write-only secret: a blank value leaves the stored secret untouched
@@ -44,7 +44,7 @@ func (s *Store) UpdatePolicy(ctx context.Context, p *SecurityPolicy) (*SecurityP
 		p.CacheEnabled, p.CacheTTL,
 		p.BotProtection, p.ChallengeEnabled, p.WAFCustomRules,
 		p.BotAllowVerified, p.ChallengeMode,
-		p.CaptchaProvider, p.CaptchaSitekey, p.CaptchaSecret)
+		p.CaptchaProvider, p.CaptchaSitekey, p.CaptchaSecret, p.UnderAttack)
 	if err != nil {
 		return nil, err
 	}

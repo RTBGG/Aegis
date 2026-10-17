@@ -13,9 +13,10 @@ lightweight node-agent. Deploys all-in-one on Debian 13 with Docker Compose.
 > **Status:** Phase 1 (foundation + security stack) and Phase 2 (depth) are complete;
 > Phase 3 (scale-out) is well underway. Built: threat-feed auto-blocklists, DNSSEC,
 > audited impersonation, real SMTP, per-route WAF tuning + custom SecRules, richer bot
-> scoring + managed/CAPTCHA challenges, and ClickHouse per-request analytics with GeoIP
-> country/ASN breakdowns. For multi-node: copy-paste edge enrollment, per-node mTLS with
-> automatic cert rotation + revocation, and weighted + GeoDNS edge distribution.
+> scoring + managed/CAPTCHA challenges, per-domain Under Attack Mode (challenge every
+> visitor), and ClickHouse per-request analytics with GeoIP country/ASN breakdowns plus a
+> live per-second traffic view. For multi-node: copy-paste edge enrollment, per-node mTLS
+> with automatic cert rotation + revocation, and weighted + GeoDNS edge distribution.
 > **Remaining:** HA control plane, signed artifact distribution, optional anycast/BGP;
 > billing/quotas is intentionally deferred (the platform is free for now).
 > See `docs/plan.md` and `docs/architecture.md`.
@@ -36,8 +37,9 @@ Redis), writes it, and runs `caddy reload` through Caddy's admin API.
 
 ```
 visitor ──DNS──> PowerDNS (returns edge IP for proxied records)
-visitor ──TLS──> Caddy edge: nftables(L3/4) → ja4 → rate_limit → botscore
-                  → challenge → coraza(CRS) → cache → reverse_proxy → origin
+visitor ──TLS──> host nftables (L3/4) → Caddy edge:
+                  ja4 → rate_limit → coraza(CRS) → botscore → challenge → cache
+                  → reverse_proxy → origin
 ```
 
 ## Features
@@ -50,6 +52,10 @@ visitor ──TLS──> Caddy edge: nftables(L3/4) → ja4 → rate_limit → b
 - Per-IP rate limiting, JA4(H) TLS/HTTP fingerprinting
 - Bot scoring with a proof-of-work managed challenge or pluggable CAPTCHA
   (Cloudflare Turnstile / hCaptcha / reCAPTCHA), plus a verified-search-bot allowlist
+- Per-domain **Under Attack Mode**: challenge every uncleared visitor (Cloudflare-style),
+  while normal mode only challenges traffic the bot scorer flags
+- Auto-ban of IPs that repeatedly fail the challenge, escalated to a host-level nftables
+  blackhole (L3 drop) with automatic expiry
 - Threat-feed IP blocklists (Spamhaus DROP, FireHOL L1) enforced at the edge
 - Edge caching (Souin) and health-checked origin load-balancing
 
@@ -62,6 +68,8 @@ visitor ──TLS──> Caddy edge: nftables(L3/4) → ja4 → rate_limit → b
 - Multi-tenant accounts, users, domains, DNS records, and per-domain security policy
 - Per-request analytics (ClickHouse): traffic, unique visitors, top paths, status
   codes, and top countries / networks (ASN) — falls back to coarse counters without it
+- Live traffic view: per-second total / passed / blocked requests for the last two
+  minutes, refreshed every few seconds
 - Admin: user management, audited impersonation, threat-feed control, SMTP email
   config + test send, and edge-fleet management (weights, regions, revocation)
 - Domain onboarding shows delegation nameservers + a TXT record, re-viewable any time
@@ -85,7 +93,8 @@ which resolves to 127.0.0.1). Log in with `BOOTSTRAP_ADMIN_*` from `.env`.
 On a fresh Debian 13 box, `deploy/debian13/install-control-plane.sh` installs
 Docker + compose, **prompts for the domain** to serve the dashboard/API on
 (defaulting to `cp.localtest.me`, switching a real domain to ACME/Let's Encrypt),
-generates secrets, and brings the stack up. See `docs/runbook-debian13.md`.
+generates secrets, brings the stack up, and applies the host L3 firewall
+(per-source flood cap) plus the auto-blackhole sync timer. See `docs/runbook-debian13.md`.
 
 ## Local compile checks (no Docker)
 

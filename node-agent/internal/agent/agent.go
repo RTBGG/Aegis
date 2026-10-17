@@ -43,6 +43,7 @@ func Run(ctx context.Context) error {
 
 	go cfg.configLoop(ctx, &version, log)
 	go cfg.telemetryLoop(ctx, &version, log)
+	go cfg.eventsLoop(ctx, log)
 	go cfg.rotateLoop(ctx, log)
 
 	select {
@@ -135,14 +136,32 @@ func (c Config) telemetryLoop(ctx context.Context, version *atomic.Int64, log *s
 		if err := c.sendTelemetry(ctx, payload); err != nil && ctx.Err() == nil {
 			log.Warn("telemetry failed", "err", errString(err))
 		}
-		if evs := drainEvents(ctx, rdb); len(evs) > 0 {
-			if err := c.sendEvents(ctx, evs); err != nil && ctx.Err() == nil {
-				log.Warn("events ship failed", "err", errString(err), "count", len(evs))
-			}
-		}
 		if ips := drainBlackhole(ctx, rdb); len(ips) > 0 {
 			if err := c.sendBlackhole(ctx, ips); err != nil && ctx.Err() == nil {
 				log.Warn("blackhole report failed", "err", errString(err), "count", len(ips))
+			}
+		}
+	}
+}
+
+// eventsLoop drains per-request analytics events from Redis and ships them to the
+// control plane much more often than telemetry, so the dashboard's live traffic
+// graph updates in near real time (a few seconds) instead of 15s batches.
+func (c Config) eventsLoop(ctx context.Context, log *slog.Logger) {
+	rdb := redis.NewClient(&redis.Options{Addr: c.RedisAddr})
+	defer rdb.Close()
+
+	ticker := time.NewTicker(c.EventInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if evs := drainEvents(ctx, rdb); len(evs) > 0 {
+			if err := c.sendEvents(ctx, evs); err != nil && ctx.Err() == nil {
+				log.Warn("events ship failed", "err", errString(err), "count", len(evs))
 			}
 		}
 	}

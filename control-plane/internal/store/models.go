@@ -67,6 +67,7 @@ type SecurityPolicy struct {
 	BotProtection    string    `db:"bot_protection"`
 	BotAllowVerified bool      `db:"bot_allow_verified"`
 	ChallengeEnabled bool      `db:"challenge_enabled"`
+	UnderAttack      bool      `db:"under_attack"`
 	ChallengeMode    string    `db:"challenge_mode"`
 	CaptchaProvider  string    `db:"captcha_provider"`
 	CaptchaSitekey   string    `db:"captcha_sitekey"`

@@ -47,8 +47,8 @@ services:
       - "--api-key=${PDNS_API_KEY}"
       - "--default-soa-content=${ASSIGNED_NS1:-ns1.localhost} hostmaster.${ASSIGNED_NS1:-ns1.localhost} 0 10800 3600 604800 3600"
     ports:
-      - "5300:53/udp"
-      - "5300:53/tcp"
+      - "53:53/udp"
+      - "53:53/tcp"
     restart: unless-stopped
 
   clickhouse:
@@ -69,6 +69,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+    # Bound ClickHouse so a big merge/query can't consume the whole small host.
+    mem_limit: 1024m
     restart: unless-stopped
 
   api:
@@ -92,6 +94,9 @@ services:
   dashboard:
     build:
       context: ./dashboard
+      # Baked into the Next.js routes-manifest at build time (see dashboard/Dockerfile).
+      args:
+        API_PROXY: http://api:8080
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     depends_on:
@@ -120,6 +125,11 @@ services:
       CP_UNDER_ATTACK: ${CP_UNDER_ATTACK:-auto}
       CP_API_UPSTREAM: api:8080
       CP_DASH_UPSTREAM: dashboard:3000
+      # Bound the Go heap so a traffic flood can't balloon Caddy's RSS and
+      # starve the (3.8 GB, no-swap) host. The GC runs more aggressively as the
+      # heap approaches this; mem_limit below is the hard backstop (the edge is
+      # restarted by the restart policy instead of thrashing the whole box).
+      GOMEMLIMIT: 1024MiB
     depends_on:
       - api
       - dashboard
@@ -131,6 +141,7 @@ services:
       - ./deploy/caddy/Caddyfile.base:/etc/caddy/Caddyfile:ro
       - caddydata:/data
       - caddyconfig:/config
+    mem_limit: 1536m
     restart: unless-stopped
 
   # Demo origin so a proxied record (content: demo-origin) has a backend to hit.

@@ -156,11 +156,12 @@ func (r *Renderer) writeSite(b *strings.Builder, host string, p *store.SecurityP
 	// Rate limiting.
 	if p.RateLimitEnabled {
 		zn := zoneName(host)
-		fmt.Fprintf(b, "\trate_limit {\n\t\tzone %s {\n\t\t\tkey {http.request.remote_ip}\n\t\t\tevents %d\n\t\t\twindow 1m\n\t\t}\n\t}\n",
+		fmt.Fprintf(b, "\trate_limit {\n\t\tzone %s {\n\t\t\tkey {http.request.remote.host}\n\t\t\tevents %d\n\t\t\twindow 1m\n\t\t}\n\t}\n",
 			zn, p.RateLimitRPM)
 	}
 
-	// Behavioural bot scoring + challenge.
+	// Behavioural bot scoring. Skipped when bot protection is off; Under Attack
+	// Mode challenges everyone regardless, so it does not depend on scoring.
 	if p.BotProtection != "off" {
 		b.WriteString("\tbotscore {\n")
 		fmt.Fprintf(b, "\t\tsensitivity %s\n", p.BotProtection)
@@ -168,14 +169,21 @@ func (r *Renderer) writeSite(b *strings.Builder, host string, p *store.SecurityP
 			b.WriteString("\t\tallow_verified_bots\n")
 		}
 		b.WriteString("\t}\n")
-		if p.ChallengeEnabled {
-			b.WriteString("\tchallenge {\n\t\tsecret {env.CHALLENGE_SECRET}\n")
-			if p.ChallengeMode == "captcha" && p.CaptchaProvider != "" && p.CaptchaSitekey != "" && p.CaptchaSecret != "" {
-				fmt.Fprintf(b, "\t\tmode captcha\n\t\tprovider %s\n\t\tsitekey %s\n\t\tcaptcha_secret %s\n",
-					p.CaptchaProvider, p.CaptchaSitekey, p.CaptchaSecret)
-			}
-			b.WriteString("\t}\n")
+	}
+
+	// Challenge. Normal mode gates only traffic the bot scorer flags; Under
+	// Attack Mode ("under_attack on") challenges every uncleared visitor — the
+	// Cloudflare-style toggle, independent of the bot sensitivity above.
+	if p.UnderAttack || (p.ChallengeEnabled && p.BotProtection != "off") {
+		b.WriteString("\tchallenge {\n\t\tsecret {env.CHALLENGE_SECRET}\n")
+		if p.ChallengeMode == "captcha" && p.CaptchaProvider != "" && p.CaptchaSitekey != "" && p.CaptchaSecret != "" {
+			fmt.Fprintf(b, "\t\tmode captcha\n\t\tprovider %s\n\t\tsitekey %s\n\t\tcaptcha_secret %s\n",
+				p.CaptchaProvider, p.CaptchaSitekey, p.CaptchaSecret)
 		}
+		if p.UnderAttack {
+			b.WriteString("\t\tunder_attack on\n")
+		}
+		b.WriteString("\t}\n")
 	}
 
 	// WAF (Coraza + OWASP CRS, baked into the image at /etc/caddy/coraza).

@@ -1,7 +1,15 @@
 # Env / secrets
 .env
+.env.*
+!.env.example
 *.local
 secrets/
+
+# Keys / certificates that must never be committed
+*.pem
+*.key
+id_rsa*
+id_ed25519*
 
 # DB backups written by deploy/debian13/update.sh
 backups/

@@ -115,6 +115,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Delete("/domains/{domainID}/waf/overrides/{overrideID}", d.Security.DeleteOverride)
 			r.Get("/domains/{domainID}/analytics", d.Analytics.Domain)
 			r.Get("/domains/{domainID}/insights", d.Analytics.Insights)
+			r.Get("/domains/{domainID}/live", d.Analytics.Live)
 			r.Put("/records/{recordID}", d.Domains.UpdateRecord)
 			r.Delete("/records/{recordID}", d.Domains.DeleteRecord)
 			r.Get("/analytics/overview", d.Analytics.Overview)

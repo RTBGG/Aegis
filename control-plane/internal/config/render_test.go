@@ -1,6 +1,12 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/aegis/control-plane/internal/appcfg"
+	"github.com/aegis/control-plane/internal/store"
+)
 
 func TestThreatFeedSnippet_Empty(t *testing.T) {
 	if s, ok := threatFeedSnippet(nil); ok || s != "" {
@@ -25,5 +31,48 @@ func TestThreatFeedSnippet_RendersMatcherAndRespond(t *testing.T) {
 func TestZoneName(t *testing.T) {
 	if got := zoneName("app.example.com"); got != "app_example_com" {
 		t.Fatalf("zoneName = %q, want app_example_com", got)
+	}
+}
+
+func renderSite(t *testing.T, p *store.SecurityPolicy) string {
+	t.Helper()
+	r := &Renderer{Cfg: &appcfg.Config{EdgeTLSMode: "acme"}}
+	var b strings.Builder
+	r.writeSite(&b, "app.example.com", p, []string{"http://origin"}, nil, false, nil)
+	return b.String()
+}
+
+func TestWriteSite_UnderAttackChallengesEveryone(t *testing.T) {
+	// Under Attack Mode must challenge every visitor even when bot scoring is
+	// disabled and the "challenge suspicious traffic" toggle is off.
+	out := renderSite(t, &store.SecurityPolicy{
+		BotProtection: "off", ChallengeEnabled: false, UnderAttack: true, ChallengeMode: "pow",
+	})
+	if !strings.Contains(out, "challenge {") || !strings.Contains(out, "under_attack on") {
+		t.Fatalf("want challenge block with under_attack on, got:\n%s", out)
+	}
+	if strings.Contains(out, "botscore {") {
+		t.Fatalf("bot protection is off; unexpected botscore:\n%s", out)
+	}
+}
+
+func TestWriteSite_NoChallengeWhenDisabled(t *testing.T) {
+	out := renderSite(t, &store.SecurityPolicy{
+		BotProtection: "off", ChallengeEnabled: false, UnderAttack: false, ChallengeMode: "pow",
+	})
+	if strings.Contains(out, "challenge {") {
+		t.Fatalf("did not expect challenge block, got:\n%s", out)
+	}
+}
+
+func TestWriteSite_SuspiciousOnlyChallengeHasNoUnderAttack(t *testing.T) {
+	out := renderSite(t, &store.SecurityPolicy{
+		BotProtection: "medium", ChallengeEnabled: true, UnderAttack: false, ChallengeMode: "pow",
+	})
+	if !strings.Contains(out, "challenge {") {
+		t.Fatalf("want challenge block for suspicious traffic, got:\n%s", out)
+	}
+	if strings.Contains(out, "under_attack on") {
+		t.Fatalf("normal mode must not set under_attack on:\n%s", out)
 	}
 }

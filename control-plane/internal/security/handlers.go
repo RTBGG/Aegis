@@ -54,6 +54,7 @@ type policyDTO struct {
 	BotProtection    string `json:"bot_protection"`
 	BotAllowVerified bool   `json:"bot_allow_verified"`
 	ChallengeEnabled bool   `json:"challenge_enabled"`
+	UnderAttack      bool   `json:"under_attack"`
 	ChallengeMode    string `json:"challenge_mode"`
 	CaptchaProvider  string `json:"captcha_provider"`
 	CaptchaSitekey   string `json:"captcha_sitekey"`
@@ -68,7 +69,7 @@ func toPolicyDTO(p *store.SecurityPolicy) policyDTO {
 		RateLimitEnabled: p.RateLimitEnabled, RateLimitRPM: p.RateLimitRPM, RateLimitBurst: p.RateLimitBurst,
 		CacheEnabled: p.CacheEnabled, CacheTTL: p.CacheTTL,
 		BotProtection: p.BotProtection, BotAllowVerified: p.BotAllowVerified,
-		ChallengeEnabled: p.ChallengeEnabled, ChallengeMode: p.ChallengeMode,
+		ChallengeEnabled: p.ChallengeEnabled, UnderAttack: p.UnderAttack, ChallengeMode: p.ChallengeMode,
 		CaptchaProvider: p.CaptchaProvider, CaptchaSitekey: p.CaptchaSitekey,
 		CaptchaSecret: "", CaptchaSecretSet: p.CaptchaSecret != "",
 	}
@@ -116,7 +117,7 @@ func (s *Service) Update(w http.ResponseWriter, r *http.Request) {
 		RateLimitEnabled: in.RateLimitEnabled, RateLimitRPM: in.RateLimitRPM, RateLimitBurst: in.RateLimitBurst,
 		CacheEnabled: in.CacheEnabled, CacheTTL: in.CacheTTL,
 		BotProtection: in.BotProtection, BotAllowVerified: in.BotAllowVerified,
-		ChallengeEnabled: in.ChallengeEnabled, ChallengeMode: in.ChallengeMode,
+		ChallengeEnabled: in.ChallengeEnabled, UnderAttack: in.UnderAttack, ChallengeMode: in.ChallengeMode,
 		CaptchaProvider: in.CaptchaProvider, CaptchaSitekey: in.CaptchaSitekey, CaptchaSecret: in.CaptchaSecret,
 	}
 	out, err := s.Store.UpdatePolicy(r.Context(), p)

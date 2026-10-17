@@ -160,8 +160,9 @@ func Load() (*Config, error) {
 	cpHost := hostOf(c.ControlPlaneURL)
 
 	// Default the authoritative nameservers to ns1/ns2 of the registrable
-	// domain of the control-plane host, so cp.rtb.st, panel.rtb.st and rtb.st
-	// all yield ns1.rtb.st / ns2.rtb.st. Override with ASSIGNED_NS1/NS2.
+	// domain of the control-plane host, so cp.example.com, panel.example.com
+	// and example.com all yield ns1.example.com / ns2.example.com. Override
+	// with ASSIGNED_NS1/NS2.
 	dns1, dns2 := nameserverDefaults(cpHost)
 	c.AssignedNS = [2]string{env("ASSIGNED_NS1", dns1), env("ASSIGNED_NS2", dns2)}
 	if names := os.Getenv("MTLS_SERVER_NAMES"); names != "" {
@@ -179,8 +180,9 @@ func Load() (*Config, error) {
 
 // nameserverDefaults returns the default authoritative nameserver hostnames for
 // a control-plane host: ns1/ns2 of its registrable domain (eTLD+1 per the Public
-// Suffix List), so cp.rtb.st, panel.rtb.st and rtb.st all yield ns1.rtb.st /
-// ns2.rtb.st, and multi-label suffixes like foo.co.uk are handled correctly.
+// Suffix List), so cp.example.com, panel.example.com and example.com all yield
+// ns1.example.com / ns2.example.com, and multi-label suffixes like foo.co.uk
+// are handled correctly.
 // Hosts with no registrable domain (e.g. "localhost") are used as-is.
 func nameserverDefaults(cpHost string) (string, string) {
 	base := cpHost

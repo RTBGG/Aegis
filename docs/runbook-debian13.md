@@ -47,7 +47,7 @@ curl -k -c jar -b jar -X POST https://cp.localtest.me/api/v1/auth/login \
 #   -> the edge reverse-proxies to the demo-origin container
 
 # DNS published by PowerDNS:
-dig @127.0.0.1 -p 5300 app.<domain> A +short
+dig @127.0.0.1 app.<domain> A +short
 
 # Through the edge (map the test host to the edge):
 curl -k --resolve app.<domain>:443:127.0.0.1 https://app.<domain>/        # whoami origin

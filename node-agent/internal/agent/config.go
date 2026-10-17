@@ -26,6 +26,7 @@ type Config struct {
 	CaddyAdmin        string
 	RedisAddr         string
 	TelemetryInterval time.Duration
+	EventInterval     time.Duration
 
 	// mTLS (post-enrollment): per-node client cert/key + CA. When all three are
 	// present the agent talks to the control plane over mutual TLS.
@@ -42,6 +43,15 @@ func env(key, def string) string {
 	return def
 }
 
+func envDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return def
+}
+
 func LoadConfig() Config {
 	c := Config{
 		ControlPlaneURL:   env("CONTROL_PLANE_URL", "http://api:8080"),
@@ -54,6 +64,7 @@ func LoadConfig() Config {
 		CaddyAdmin:        env("CADDY_ADMIN", "127.0.0.1:2019"),
 		RedisAddr:         env("AEGIS_REDIS", "redis:6379"),
 		TelemetryInterval: 15 * time.Second,
+		EventInterval:     envDuration("EVENTS_INTERVAL", 3*time.Second),
 		CertFile:          os.Getenv("EDGE_CERT_FILE"),
 		KeyFile:           os.Getenv("EDGE_KEY_FILE"),
 		CAFile:            os.Getenv("EDGE_CA_FILE"),
