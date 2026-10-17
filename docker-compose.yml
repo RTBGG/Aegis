@@ -69,8 +69,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
-    # Bound ClickHouse so a big merge/query can't consume the whole small host.
-    mem_limit: 1024m
+    # Host-RAM-relative cap (see deploy/debian13/mem-limits.sh). Prevent a big
+    # merge/query from consuming the whole host; override in .env if needed.
+    mem_limit: ${CLICKHOUSE_MEM_LIMIT:-1024m}
     restart: unless-stopped
 
   api:
@@ -125,11 +126,10 @@ services:
       CP_UNDER_ATTACK: ${CP_UNDER_ATTACK:-auto}
       CP_API_UPSTREAM: api:8080
       CP_DASH_UPSTREAM: dashboard:3000
-      # Bound the Go heap so a traffic flood can't balloon Caddy's RSS and
-      # starve the (3.8 GB, no-swap) host. The GC runs more aggressively as the
-      # heap approaches this; mem_limit below is the hard backstop (the edge is
-      # restarted by the restart policy instead of thrashing the whole box).
-      GOMEMLIMIT: 1024MiB
+      # Host-RAM-relative caps (computed by deploy/debian13/mem-limits.sh; see
+      # .env.example). GOMEMLIMIT is the Go soft heap target; mem_limit is the
+      # hard backstop so a flood restarts the edge instead of thrashing the box.
+      GOMEMLIMIT: ${CADDY_GOMEMLIMIT:-1024MiB}
     depends_on:
       - api
       - dashboard
@@ -141,7 +141,7 @@ services:
       - ./deploy/caddy/Caddyfile.base:/etc/caddy/Caddyfile:ro
       - caddydata:/data
       - caddyconfig:/config
-    mem_limit: 1536m
+    mem_limit: ${CADDY_MEM_LIMIT:-1536m}
     restart: unless-stopped
 
   # Demo origin so a proxied record (content: demo-origin) has a backend to hit.

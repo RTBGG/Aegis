@@ -1,6 +1,7 @@
 package domains
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -70,6 +71,25 @@ func (in *recordInput) normaliseAndValidate() (string, bool) {
 	}
 	if in.Proxied && in.Type != "A" && in.Type != "AAAA" && in.Type != "CNAME" {
 		return "only A, AAAA and CNAME records can be proxied", false
+	}
+	// Proxied A/AAAA/CNAME records hold an origin (hostname or IP) that the edge
+	// reverse-proxies to. Once unproxied, the content is published verbatim, so
+	// it must be valid for the record type — otherwise PowerDNS rejects the zone.
+	if !in.Proxied {
+		switch in.Type {
+		case "A":
+			if ip := net.ParseIP(in.Content); ip == nil || ip.To4() == nil {
+				return "an unproxied A record needs an IPv4 address as content (the current value is an origin host, valid only while proxied)", false
+			}
+		case "AAAA":
+			if ip := net.ParseIP(in.Content); ip == nil || ip.To4() != nil {
+				return "an unproxied AAAA record needs an IPv6 address as content (the current value is an origin host, valid only while proxied)", false
+			}
+		case "CNAME":
+			if net.ParseIP(strings.TrimSuffix(in.Content, ".")) != nil {
+				return "a CNAME record's content must be a hostname, not an IP address", false
+			}
+		}
 	}
 	return "", true
 }

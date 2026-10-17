@@ -95,6 +95,12 @@ if [ ! -f .env ]; then
   red "Admin password (save it):"; grep '^BOOTSTRAP_ADMIN_PASSWORD=' .env
 fi
 
+# Add host-RAM-relative memory caps to .env if not already set (scales the caps
+# with this server's RAM; explicit overrides in .env are preserved).
+if [ -f deploy/debian13/ensure-mem-limits.sh ]; then
+  bash deploy/debian13/ensure-mem-limits.sh
+fi
+
 grn "Building and starting the stack…"
 docker compose up -d --build
 

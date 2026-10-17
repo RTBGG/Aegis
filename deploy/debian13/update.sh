@@ -82,6 +82,11 @@ else
 fi
 
 # --- 4. Rebuild + restart --------------------------------------------------
+# Add any missing host-RAM-relative memory caps (existing values preserved).
+if [ -f deploy/debian13/ensure-mem-limits.sh ]; then
+  bash deploy/debian13/ensure-mem-limits.sh
+fi
+
 grn "Rebuilding and restarting the stack (migrations run on api start)…"
 docker compose up -d --build
 

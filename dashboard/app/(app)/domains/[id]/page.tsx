@@ -136,6 +136,11 @@ function DnsTab({ domainId }: { domainId: string }) {
   const [ttl, setTtl] = useState(300);
   const [proxied, setProxied] = useState(true);
   const [err, setErr] = useState("");
+  const [rowErr, setRowErr] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editContent, setEditContent] = useState("");
+  const [editTTL, setEditTTL] = useState(300);
 
   function load() {
     api.get<{ records: DnsRecord[] }>(`/domains/${domainId}/records`).then((r) => setRecords(r.records ?? [])).catch(() => {});
@@ -162,12 +167,59 @@ function DnsTab({ domainId }: { domainId: string }) {
   }
 
   async function toggleProxy(rec: DnsRecord) {
-    await api.put(`/records/${rec.id}`, { ...rec, proxied: !rec.proxied });
-    load();
+    setRowErr("");
+    const isEditing = editing === rec.id;
+    try {
+      // Send only the mutable fields; the API rejects unknown JSON fields.
+      await api.put(`/records/${rec.id}`, {
+        type: rec.type,
+        name: isEditing ? editName : rec.name,
+        content: isEditing ? editContent : rec.content,
+        ttl: isEditing ? Number(editTTL) || 300 : rec.ttl,
+        priority: rec.priority,
+        proxied: !rec.proxied,
+      });
+      load();
+    } catch (e) {
+      setRowErr(e instanceof ApiError ? e.message : "Failed to update record");
+    }
   }
   async function del(rec: DnsRecord) {
-    await api.del(`/records/${rec.id}`);
-    load();
+    setRowErr("");
+    try {
+      await api.del(`/records/${rec.id}`);
+      if (editing === rec.id) setEditing(null);
+      load();
+    } catch (e) {
+      setRowErr(e instanceof ApiError ? e.message : "Failed to delete record");
+    }
+  }
+  function startEdit(rec: DnsRecord) {
+    setRowErr("");
+    setEditing(rec.id);
+    setEditName(rec.name);
+    setEditContent(rec.content);
+    setEditTTL(rec.ttl);
+  }
+  function cancelEdit() {
+    setEditing(null);
+  }
+  async function saveEdit(rec: DnsRecord) {
+    setRowErr("");
+    try {
+      await api.put(`/records/${rec.id}`, {
+        type: rec.type,
+        name: editName.trim() || "@",
+        content: editContent.trim(),
+        ttl: Number(editTTL) || 300,
+        priority: rec.priority,
+        proxied: rec.proxied,
+      });
+      setEditing(null);
+      load();
+    } catch (e) {
+      setRowErr(e instanceof ApiError ? e.message : "Failed to update record");
+    }
   }
 
   return (
@@ -216,30 +268,83 @@ function DnsTab({ domainId }: { domainId: string }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-edge">
-              {records.map((r) => (
-                <tr key={r.id}>
-                  <td className="py-2 font-mono">{r.type}</td>
-                  <td className="font-mono">{r.name}</td>
-                  <td className="font-mono text-slate-300">{r.content}</td>
-                  <td>{r.ttl}</td>
-                  <td>
-                    {canProxy(r.type) ? (
-                      <Toggle checked={r.proxied} onChange={() => toggleProxy(r)} />
-                    ) : (
-                      <span className="text-slate-600">—</span>
-                    )}
-                  </td>
-                  <td className="text-right">
-                    <button onClick={() => del(r)} className="text-red-400 hover:underline">
-                      delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {records.map((r) => {
+                const isEditing = editing === r.id;
+                return (
+                  <tr key={r.id}>
+                    <td className="py-2 font-mono">{r.type}</td>
+                    <td className="font-mono">
+                      {isEditing ? (
+                        <Input
+                          value={editName}
+                          onChange={(e) => setEditName(e.target.value)}
+                          className="w-32 rounded-md border border-edge bg-ink/60 px-2 py-1 font-mono text-xs outline-none focus:border-accent"
+                        />
+                      ) : (
+                        r.name
+                      )}
+                    </td>
+                    <td className="font-mono text-slate-300">
+                      {isEditing ? (
+                        <Input
+                          value={editContent}
+                          onChange={(e) => setEditContent(e.target.value)}
+                          className="w-48 rounded-md border border-edge bg-ink/60 px-2 py-1 font-mono text-xs outline-none focus:border-accent"
+                        />
+                      ) : (
+                        r.content
+                      )}
+                    </td>
+                    <td>
+                      {isEditing ? (
+                        <Input
+                          type="number"
+                          min={60}
+                          max={86400}
+                          value={editTTL}
+                          onChange={(e) => setEditTTL(Number(e.target.value))}
+                          className="w-20 rounded-md border border-edge bg-ink/60 px-2 py-1 text-xs outline-none focus:border-accent"
+                        />
+                      ) : (
+                        r.ttl
+                      )}
+                    </td>
+                    <td>
+                      {canProxy(r.type) ? (
+                        <Toggle checked={r.proxied} onChange={() => toggleProxy(r)} />
+                      ) : (
+                        <span className="text-slate-600">—</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap text-right">
+                      {isEditing ? (
+                        <>
+                          <button onClick={() => saveEdit(r)} className="text-emerald-300 hover:underline">
+                            save
+                          </button>
+                          <button onClick={cancelEdit} className="ml-3 text-slate-400 hover:underline">
+                            cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => startEdit(r)} className="text-accent hover:underline">
+                            edit
+                          </button>
+                          <button onClick={() => del(r)} className="ml-3 text-red-400 hover:underline">
+                            delete
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </Card>
+      <ErrorText>{rowErr}</ErrorText>
     </div>
   );
 }

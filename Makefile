@@ -20,7 +20,12 @@ env: ## Create .env from .env.example if missing
 # --- Docker stack ----------------------------------------------------------
 .PHONY: up
 up: env ## Build + start the all-in-one stack
+	@bash deploy/debian13/ensure-mem-limits.sh
 	$(COMPOSE) up -d --build
+
+.PHONY: mem-limits
+mem-limits: ## Show the host-RAM-relative memory limits for this server
+	@bash deploy/debian13/mem-limits.sh
 
 .PHONY: down
 down: ## Stop the stack
